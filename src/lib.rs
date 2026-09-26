@@ -8,5 +8,10 @@ pub mod error;
 pub mod logs;
 /// Progress reporting backed by `indicatif` for the CLI.
 pub mod progress;
+/// Multi-source mod resolution (Thunderstore, Hexium) and the sidecar file
+/// recording which source each installed mod came from.
+pub mod sources;
 /// Resolves which directory an invocation installs into and tracks against.
 pub mod target;
+#[cfg(test)]
+mod test_support;

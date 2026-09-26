@@ -1,3 +1,4 @@
+use crate::sources::SourceId;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
@@ -58,6 +59,11 @@ pub struct ModsArgs {
   /// One or more `Owner-ModName` identifiers.
   #[arg(required = true)]
   pub mods: Vec<String>,
+  /// Force these mods to resolve from this source, even if another configured
+  /// source would otherwise win. Their dependencies still resolve from
+  /// whichever configured source has them.
+  #[arg(long, value_enum)]
+  pub source: Option<SourceId>,
 }
 
 /// Arguments for the uninstall command.
@@ -135,6 +141,9 @@ pub struct CommandArgs {
 pub struct SearchArgs {
   /// Search term to find mods by name.
   pub term: String,
+  /// Restrict the search to this source instead of every configured one.
+  #[arg(long, value_enum)]
+  pub source: Option<SourceId>,
 }
 
 /// Subcommands for the update operation.
@@ -221,6 +230,12 @@ pub struct ImportArgs {
   /// directory import copies over the destination without clearing it first, so
   /// mods already there under a different set can be left behind untracked.
   pub source: String,
+  /// Uninstall mods this target has that the import's source no longer names.
+  /// Refused up front when `source` is a directory: a directory import is
+  /// already a raw, non-reconciling copy, and prune has nothing well-defined
+  /// to do there.
+  #[arg(long)]
+  pub prune: bool,
 }
 
 #[cfg(test)]
@@ -244,9 +259,15 @@ mod tests {
     );
 
     let search_args = search_command.get_arguments().collect::<Vec<_>>();
-    assert_eq!(search_args.len(), 1);
+    assert_eq!(search_args.len(), 2);
     assert_eq!(search_args[0].get_id().as_str(), "term");
     assert!(search_args[0].get_help().is_some());
+    assert!(
+      search_command
+        .get_arguments()
+        .any(|arg| arg.get_id().as_str() == "source"),
+      "search should offer --source to restrict which mod source it queries"
+    );
     assert!(
       search_args[0]
         .get_help()

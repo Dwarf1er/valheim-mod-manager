@@ -2747,14 +2747,16 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "valheim-mod-manager"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
+ "async-trait",
  "base64 0.23.1",
  "clap",
  "config",
  "dirs",
  "indicatif",
  "mockito",
+ "reqwest",
  "serde",
  "serde_json",
  "shellexpand",

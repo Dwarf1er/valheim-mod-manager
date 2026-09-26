@@ -1,12 +1,23 @@
 use crate::cli::ListFormat;
 use crate::error::AppResult;
+use crate::sources::SourceId;
 use crate::target::Target;
+use std::collections::HashMap;
 use thunderstore_engine::profile::modlist::ProfileMod;
 
 /// Renders the installed mods, sorted by identifier.
 ///
+/// `sources` is the target's `.vmm_sources.json` sidecar (see
+/// [`crate::sources::read_sources`]); an entry it does not name — an old
+/// sidecar, or a mod adopted before Hexium support existed — is reported as
+/// `thunderstore`, since that was the only source before the sidecar existed.
+///
 /// Pure so the output can be asserted without capturing stdout.
-pub fn render(mods: &[ProfileMod], format: &ListFormat) -> AppResult<String> {
+pub fn render(
+  mods: &[ProfileMod],
+  format: &ListFormat,
+  sources: &HashMap<String, SourceId>,
+) -> AppResult<String> {
   let mut sorted: Vec<&ProfileMod> = mods.iter().collect();
 
   sorted.sort_by(|a, b| a.name.cmp(&b.name));
@@ -30,10 +41,16 @@ pub fn render(mods: &[ProfileMod], format: &ListFormat) -> AppResult<String> {
       let entries: Vec<serde_json::Value> = sorted
         .iter()
         .map(|entry| {
+          let source = sources
+            .get(&entry.name)
+            .copied()
+            .unwrap_or(SourceId::Thunderstore);
+
           serde_json::json!({
             "full_name": entry.name,
             "version": entry.version_number.to_string(),
             "enabled": entry.enabled,
+            "source": source.to_string(),
           })
         })
         .collect();
@@ -48,8 +65,9 @@ pub fn render(mods: &[ProfileMod], format: &ListFormat) -> AppResult<String> {
 /// Prints the mods recorded in the target's `mods.yml`.
 pub fn run(target: &Target, format: &ListFormat) -> AppResult<()> {
   let mods = super::read_modlist(target)?;
+  let sources = crate::sources::read_sources(target);
 
-  print!("{}", render(&mods, format)?);
+  print!("{}", render(&mods, format, &sources)?);
 
   Ok(())
 }
@@ -94,7 +112,7 @@ mod tests {
     let target = fixture.target();
     let mods = installed_mods(&fixture, &target);
 
-    let rendered = render(&mods, &ListFormat::Text).unwrap();
+    let rendered = render(&mods, &ListFormat::Text, &HashMap::new()).unwrap();
 
     assert_eq!(rendered, "Owner-ModA 1.0.0\nOwner-ModB 1.0.0 (disabled)\n");
   }
@@ -105,7 +123,7 @@ mod tests {
     let target = fixture.target();
     let mods = installed_mods(&fixture, &target);
 
-    let rendered = render(&mods, &ListFormat::Json).unwrap();
+    let rendered = render(&mods, &ListFormat::Json, &HashMap::new()).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&rendered).unwrap();
 
     assert_eq!(parsed[0]["full_name"], "Owner-ModA");
@@ -116,10 +134,30 @@ mod tests {
   }
 
   #[test]
-  fn nothing_installed_renders_empty() {
-    assert_eq!(render(&[], &ListFormat::Text).unwrap(), "");
+  fn json_output_defaults_missing_sidecar_entries_to_thunderstore_and_honors_present_ones() {
+    let fixture = Fixture::new();
+    let target = fixture.target();
+    let mods = installed_mods(&fixture, &target);
 
-    let json = render(&[], &ListFormat::Json).unwrap();
+    let mut sources = HashMap::new();
+    sources.insert("Owner-ModB".to_string(), SourceId::Hexium);
+
+    let rendered = render(&mods, &ListFormat::Json, &sources).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+
+    // No sidecar entry for Owner-ModA: an old sidecar, or a mod installed
+    // before Hexium support existed, must still parse as `thunderstore`.
+    assert_eq!(parsed[0]["full_name"], "Owner-ModA");
+    assert_eq!(parsed[0]["source"], "thunderstore");
+    assert_eq!(parsed[1]["full_name"], "Owner-ModB");
+    assert_eq!(parsed[1]["source"], "hexium");
+  }
+
+  #[test]
+  fn nothing_installed_renders_empty() {
+    assert_eq!(render(&[], &ListFormat::Text, &HashMap::new()).unwrap(), "");
+
+    let json = render(&[], &ListFormat::Json, &HashMap::new()).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
 
     assert_eq!(parsed.as_array().unwrap().len(), 0);
@@ -156,7 +194,12 @@ mod tests {
       ))
       .unwrap();
 
-    let rendered = render(&modlist::read(&profile.dir).unwrap(), &ListFormat::Text).unwrap();
+    let rendered = render(
+      &modlist::read(&profile.dir).unwrap(),
+      &ListFormat::Text,
+      &HashMap::new(),
+    )
+    .unwrap();
 
     assert_eq!(rendered, "Owner-ModB 1.0.0\n");
     assert!(modlist::read(fixture.game_dir.path()).is_err());

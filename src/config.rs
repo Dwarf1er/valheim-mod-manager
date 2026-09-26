@@ -4,6 +4,7 @@ use std::io::Write;
 use std::{fs::OpenOptions, path::Path};
 
 use crate::error::{AppError, AppResult};
+use crate::sources::SourceId;
 
 /// How the game is launched, mapped onto the engine's `LaunchContext`.
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -22,6 +23,30 @@ impl Default for LaunchConfig {
       store: "steam".into(),
       runtime: "native".into(),
       extra_args: Vec::new(),
+    }
+  }
+}
+
+/// Which mod sources vmm resolves and installs from.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct SourcesConfig {
+  /// The configured sources, in priority order (see
+  /// [`crate::sources::merged_manifest`]'s collision rule). Defaults to
+  /// `[thunderstore]` alone, so an existing config is unaffected until a user
+  /// opts into Hexium by adding it here.
+  #[serde(default = "default_enabled_sources")]
+  pub enabled: Vec<SourceId>,
+}
+
+/// The default `[sources] enabled` list: Thunderstore alone.
+fn default_enabled_sources() -> Vec<SourceId> {
+  vec![SourceId::Thunderstore]
+}
+
+impl Default for SourcesConfig {
+  fn default() -> Self {
+    Self {
+      enabled: vec![SourceId::Thunderstore],
     }
   }
 }
@@ -60,6 +85,10 @@ pub struct AppConfig {
   /// Launch settings.
   #[serde(default)]
   pub launch: LaunchConfig,
+  /// Which mod sources to resolve and install from. Defaults to Thunderstore
+  /// alone; Hexium is opt-in.
+  #[serde(default)]
+  pub sources: SourcesConfig,
 }
 
 impl Default for AppConfig {
@@ -71,6 +100,7 @@ impl Default for AppConfig {
       install_dir: None,
       data_dir: None,
       launch: LaunchConfig::default(),
+      sources: SourcesConfig::default(),
     }
   }
 }
@@ -108,6 +138,11 @@ impl AppConfig {
       Some(dir) => expand_path(dir),
       None => std::path::PathBuf::from(&*APP_CACHE_DIR),
     }
+  }
+
+  /// The configured mod sources, in priority order.
+  pub fn enabled_sources(&self) -> Vec<SourceId> {
+    self.sources.enabled.clone()
   }
 }
 
@@ -274,6 +309,15 @@ fn get_config_from(
     .set_default(
       "launch.extra_args",
       default_config_data.launch.extra_args.clone(),
+    )?
+    .set_default(
+      "sources.enabled",
+      default_config_data
+        .sources
+        .enabled
+        .iter()
+        .map(SourceId::to_string)
+        .collect::<Vec<String>>(),
     )?;
 
   if let Some(path) = config_override {

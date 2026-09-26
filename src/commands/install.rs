@@ -1,7 +1,10 @@
 use crate::error::AppResult;
+use crate::sources::{ModSource, SourceId};
 use crate::target::{GAME, Target};
+use std::collections::HashMap;
 use thunderstore_engine::client::ThunderstoreClient;
 use thunderstore_engine::ecosystem::Ecosystem;
+use thunderstore_engine::models::PackageIndex;
 use thunderstore_engine::profile;
 
 /// Installs each mod and its full dependency closure into the target.
@@ -15,12 +18,73 @@ use thunderstore_engine::profile;
 /// request to have it active. Only an incidentally reinstalled dependency keeps
 /// its disabled state, which `install_batch` restores after the whole batch,
 /// even when the batch failed partway.
+///
+/// Kept as the Thunderstore-only entry point [`run_with_sources`] is layered
+/// over, so the bulk of this module's tests can exercise the shared pipeline
+/// without needing a multi-source fixture. `main` always calls
+/// `run_with_sources`.
+#[cfg_attr(not(test), allow(dead_code))]
 pub async fn run(
   client: &ThunderstoreClient,
   eco: &Ecosystem,
   target: &Target,
   mods: &[String],
 ) -> AppResult<()> {
+  let index = client.get_manifest().await?;
+
+  install_with_index(client, &index, eco, target, mods).await?;
+
+  Ok(())
+}
+
+/// [`run`], resolving against every configured source's merged manifest rather
+/// than Thunderstore alone.
+///
+/// `forced_source`, when set, forces every name in `mods` to resolve from that
+/// source specifically (see [`crate::sources::merged_manifest`]'s `forced`
+/// parameter) — their dependencies still resolve from whichever configured
+/// source has them. Downloads go through `sources[0]`'s client: any one
+/// source's client can download a file resolved from any other source, since
+/// the engine's download layer is not scoped to a client's own `base_url`.
+///
+/// Records which source each succeeded mod came from in the target's
+/// `.vmm_sources.json` sidecar.
+pub async fn run_with_sources(
+  sources: &[Box<dyn ModSource>],
+  forced_source: Option<SourceId>,
+  eco: &Ecosystem,
+  target: &Target,
+  mods: &[String],
+) -> AppResult<()> {
+  let forced: HashMap<String, SourceId> = match forced_source {
+    Some(id) => mods.iter().map(|name| (name.clone(), id)).collect(),
+    None => HashMap::new(),
+  };
+
+  let (index, source_map) =
+    crate::sources::merged_manifest(&crate::sources::as_refs(sources), false, &forced).await?;
+  let download_client = crate::sources::first_download_client(sources)?;
+
+  let outcome = install_with_index(download_client, &index, eco, target, mods).await?;
+
+  crate::sources::record_sources(
+    target,
+    outcome
+      .iter()
+      .filter_map(|name| source_map.get(name).map(|id| (name.clone(), *id))),
+  )
+}
+
+/// The shared install pipeline: plans the batch, installs it against an
+/// already-resolved `index`, reports what happened, and returns every
+/// identifier that succeeded (the named mods plus their dependency closure).
+async fn install_with_index(
+  download_client: &ThunderstoreClient,
+  index: &PackageIndex,
+  eco: &Ecosystem,
+  target: &Target,
+  mods: &[String],
+) -> AppResult<Vec<String>> {
   // Read the record first, not for its own sake: the planner below reads the
   // same file immediately after, but reading it here first means an unreadable
   // mods.yml speaks in vmm's advice voice instead of the engine's raw error
@@ -28,14 +92,13 @@ pub async fn run(
   super::read_modlist(target)?;
 
   let batch = profile::plan_install_batch(&target.dir, mods, mods)?;
-  let index = client.get_manifest().await?;
 
   let outcome = profile::install_batch(
     &target.dir,
     &target.base,
     eco,
-    &index,
-    client,
+    index,
+    download_client,
     GAME,
     &batch,
     thunderstore_engine::profile::modlist::now_millis(),
@@ -50,7 +113,9 @@ pub async fn run(
     }
   }
 
-  super::report_batch_failures(&outcome)
+  super::report_batch_failures(&outcome)?;
+
+  Ok(outcome.succeeded)
 }
 
 #[cfg(test)]
@@ -354,5 +419,96 @@ mod tests {
     ));
 
     assert!(result.is_err());
+  }
+
+  #[test]
+  fn run_with_sources_installs_a_mod_that_only_exists_on_the_second_source() {
+    let fixture = Fixture::new();
+    let target = fixture.target();
+    let eco = Ecosystem::bundled();
+
+    Runtime::new()
+      .unwrap()
+      .block_on(run_with_sources(
+        &fixture.multi_sources(),
+        None,
+        &eco,
+        &target,
+        &["Hexium-OnlyMod".to_string()],
+      ))
+      .unwrap();
+
+    let mods = modlist::read(&target.dir).unwrap();
+
+    assert_eq!(mods.len(), 1);
+    assert_eq!(mods[0].name, "Hexium-OnlyMod");
+
+    // The sidecar records which source it came from.
+    let recorded = crate::sources::read_sources(&target);
+
+    assert_eq!(
+      recorded.get("Hexium-OnlyMod"),
+      Some(&crate::sources::SourceId::Hexium)
+    );
+  }
+
+  #[test]
+  fn run_with_sources_records_thunderstore_for_a_thunderstore_only_mod() {
+    let fixture = Fixture::new();
+    let target = fixture.target();
+    let eco = Ecosystem::bundled();
+
+    Runtime::new()
+      .unwrap()
+      .block_on(run_with_sources(
+        &fixture.multi_sources(),
+        None,
+        &eco,
+        &target,
+        &["Owner-ModA".to_string()],
+      ))
+      .unwrap();
+
+    let recorded = crate::sources::read_sources(&target);
+
+    assert_eq!(
+      recorded.get("Owner-ModA"),
+      Some(&crate::sources::SourceId::Thunderstore)
+    );
+  }
+
+  #[test]
+  fn forcing_a_source_overrides_the_collision_winner_for_the_named_mod() {
+    let fixture = Fixture::new();
+    let target = fixture.target();
+    let eco = Ecosystem::bundled();
+
+    // Owner-Shared exists on both sources with Hexium's copy newer, so an
+    // unforced install would resolve it from Hexium. `--source thunderstore`
+    // forces the explicitly named mod to Thunderstore instead.
+    Runtime::new()
+      .unwrap()
+      .block_on(run_with_sources(
+        &fixture.multi_sources(),
+        Some(crate::sources::SourceId::Thunderstore),
+        &eco,
+        &target,
+        &["Owner-Shared".to_string()],
+      ))
+      .unwrap();
+
+    let mods = modlist::read(&target.dir).unwrap();
+
+    assert_eq!(
+      modlist::find(&mods, "Owner-Shared").unwrap().name,
+      "Owner-Shared"
+    );
+
+    let recorded = crate::sources::read_sources(&target);
+
+    assert_eq!(
+      recorded.get("Owner-Shared"),
+      Some(&crate::sources::SourceId::Thunderstore)
+    );
   }
 }

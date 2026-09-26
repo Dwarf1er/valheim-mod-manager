@@ -1,6 +1,13 @@
 //! Shared fixtures for command tests: a mock Thunderstore index plus a real mod
 //! archive, so the install pipeline runs end to end with no network access.
+//!
+//! This file is compiled twice — once under the `valheim_mod_manager` lib
+//! target (whose only user is `sources.rs`'s own tests) and once under the
+//! `vmm` binary (whose `commands::*` tests use the rest of it) — so any one
+//! field or method is "unused" from either target's point of view alone.
+#![allow(dead_code)]
 
+use crate::sources::{HexiumSource, ModSource, ThunderstoreSource};
 use crate::target::Target;
 use std::io::{Cursor, Write};
 use tempfile::TempDir;
@@ -58,13 +65,45 @@ pub fn index_json(server_url: &str) -> String {
   };
 
   format!(
-    "[{},{},{},{}]",
+    "[{},{},{},{},{}]",
     package("Owner", "ModA", "1.0.0", ""),
     package("Owner", "ModB", "1.0.0", ""),
     package("Owner", "ModC", "1.0.0", "\"Owner-ModA-1.0.0\""),
     // A real loader identifier, so `Ecosystem::modloader_package` recognises it
     // and the loader-specific paths are reachable from tests.
-    package("denikson", "BepInExPack_Valheim", "5.4.2200", "")
+    package("denikson", "BepInExPack_Valheim", "5.4.2200", ""),
+    // Also carried on the Hexium index (`hexium_index_json`) at a *later*
+    // `date_updated`, so multi-source tests can exercise the collision rule.
+    package("Owner", "Shared", "1.0.0", "")
+  )
+}
+
+/// The Hexium package index for a fixture's second mock server: `Hexium-OnlyMod`
+/// (present on no other source, so cross-source resolution is testable) and a
+/// newer `Owner-Shared` than Thunderstore's `index_json` carries (so the
+/// merge's collision rule is testable), with downloads pointed at `server_url`.
+pub fn hexium_index_json(server_url: &str) -> String {
+  format!(
+    r#"[{{"name":"OnlyMod","full_name":"Hexium-OnlyMod","owner":"Hexium",
+    "package_url":"https://example.com/OnlyMod",
+    "date_created":"2024-01-01T12:00:00Z","date_updated":"2024-01-02T12:00:00Z",
+    "uuid4":"pkg-OnlyMod","rating_score":1,"is_pinned":false,
+    "is_deprecated":false,"has_nsfw_content":false,"categories":[],
+    "versions":[{{"name":"OnlyMod","full_name":"Hexium-OnlyMod",
+    "description":"A Hexium-only mod","icon":"icon.png","version_number":"1.0.0",
+    "dependencies":[],"download_url":"{server_url}/dl/OnlyMod.zip",
+    "downloads":1,"date_created":"2024-01-01T12:00:00Z",
+    "website_url":"","is_active":true,"uuid4":"ver-OnlyMod","file_size":1024}}]}},
+    {{"name":"Shared","full_name":"Owner-Shared","owner":"Owner",
+    "package_url":"https://example.com/Shared",
+    "date_created":"2024-01-01T12:00:00Z","date_updated":"2024-06-01T12:00:00Z",
+    "uuid4":"pkg-Shared-hexium","rating_score":1,"is_pinned":false,
+    "is_deprecated":false,"has_nsfw_content":false,"categories":[],
+    "versions":[{{"name":"Shared","full_name":"Owner-Shared",
+    "description":"Hexium's newer copy","icon":"icon.png","version_number":"2.0.0",
+    "dependencies":[],"download_url":"{server_url}/dl/Shared.zip",
+    "downloads":1,"date_created":"2024-06-01T12:00:00Z",
+    "website_url":"","is_active":true,"uuid4":"ver-Shared-hexium","file_size":1024}}]}}]"#
   )
 }
 
@@ -100,6 +139,8 @@ pub struct Fixture {
   pub server: mockito::ServerGuard,
   /// A client configured to talk to `server`.
   pub client: ThunderstoreClient,
+  /// A second mock server, standing in for Hexium, for multi-source tests.
+  pub hexium_server: mockito::ServerGuard,
   /// The engine base directory (`<base>/<GAME>/{cache,exports,profiles}`).
   pub base: TempDir,
   /// The simulated game directory.
@@ -127,8 +168,32 @@ impl Fixture {
       ("ModB", mod_zip_with("1.0.0", "ModB.dll")),
       ("ModC", mod_zip_with("1.0.0", "ModC.dll")),
       ("BepInExPack_Valheim", loader_zip()),
+      ("Shared", mod_zip_with("1.0.0", "Shared.dll")),
     ] {
       server
+        .mock("GET", format!("/dl/{name}.zip").as_str())
+        .with_status(200)
+        .with_header("Content-Type", "application/zip")
+        .with_body(archive)
+        .create();
+    }
+
+    let mut hexium_server = mockito::Server::new();
+    let hexium_url = hexium_server.url();
+
+    hexium_server
+      .mock("GET", "/hexium-pkg/")
+      .with_status(200)
+      .with_header("Content-Type", "application/json")
+      .with_header("Last-Modified", "Wed, 21 Feb 2024 15:30:45 GMT")
+      .with_body(hexium_index_json(&hexium_url))
+      .create();
+
+    for (name, archive) in [
+      ("OnlyMod", mod_zip_with("1.0.0", "OnlyMod.dll")),
+      ("Shared", mod_zip_with("2.0.0", "Shared.dll")),
+    ] {
+      hexium_server
         .mock("GET", format!("/dl/{name}.zip").as_str())
         .with_status(200)
         .with_header("Content-Type", "application/zip")
@@ -148,6 +213,7 @@ impl Fixture {
     Self {
       server,
       client,
+      hexium_server,
       base,
       game_dir,
     }
@@ -176,5 +242,43 @@ impl Fixture {
       Some(name),
     )
     .unwrap()
+  }
+
+  /// A `ThunderstoreSource` wrapping a fresh client pointed at this fixture's
+  /// mock server. A fresh client rather than `self.client`, since
+  /// `ThunderstoreClient` is not `Clone` and `ModSource` owns its client.
+  pub fn thunderstore_source(&self) -> Box<dyn ModSource> {
+    let client = ThunderstoreClient::builder()
+      .package_index_url(format!("{}/pkg/", self.server.url()))
+      .cache_dir(self.base.path())
+      .build()
+      .unwrap();
+
+    Box::new(ThunderstoreSource(client))
+  }
+
+  /// A `HexiumSource` wrapping a client pointed at this fixture's Hexium mock
+  /// server.
+  pub fn hexium_source(&self) -> Box<dyn ModSource> {
+    let client = ThunderstoreClient::builder()
+      .base_url(self.hexium_server.url())
+      .package_index_url(format!("{}/hexium-pkg/", self.hexium_server.url()))
+      .cache_dir(self.base.path())
+      .build()
+      .unwrap();
+
+    Box::new(HexiumSource::new(client).unwrap())
+  }
+
+  /// Thunderstore alone, configured the way a fresh install (Hexium not opted
+  /// into) sees it.
+  pub fn sources(&self) -> Vec<Box<dyn ModSource>> {
+    vec![self.thunderstore_source()]
+  }
+
+  /// Both sources configured, Thunderstore first, matching the default
+  /// `[sources] enabled` priority.
+  pub fn multi_sources(&self) -> Vec<Box<dyn ModSource>> {
+    vec![self.thunderstore_source(), self.hexium_source()]
   }
 }

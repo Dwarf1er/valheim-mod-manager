@@ -1,8 +1,56 @@
 use crate::error::AppResult;
+use crate::sources::{ModSource, SourceId};
+use std::collections::HashMap;
 use thunderstore_engine::client::ThunderstoreClient;
+use thunderstore_engine::models::PackageIndex;
 
+/// Kept as the Thunderstore-only entry point [`run_multi`] is layered over;
+/// `main` always calls `run_multi`.
+#[cfg_attr(not(test), allow(dead_code))]
 pub async fn run(client: &ThunderstoreClient, term: &str) -> AppResult<()> {
   let manifest = client.get_manifest().await?;
+
+  print_results(&manifest, &HashMap::new(), term)
+}
+
+/// [`run`], searching every configured source's merged manifest, or just
+/// `source_filter` when one is given, and annotating each hit with `[source]`
+/// once more than one source is actually in play — so single-source output
+/// stays byte-for-byte what it always was.
+pub async fn run_multi(
+  sources: &[Box<dyn ModSource>],
+  source_filter: Option<SourceId>,
+  term: &str,
+) -> AppResult<()> {
+  let selected: Vec<&dyn ModSource> = match source_filter {
+    Some(id) => sources
+      .iter()
+      .filter(|source| source.id() == id)
+      .map(|source| source.as_ref())
+      .collect(),
+    None => crate::sources::as_refs(sources),
+  };
+
+  let (manifest, source_map) =
+    crate::sources::merged_manifest(&selected, false, &HashMap::new()).await?;
+
+  let show_source = selected.len() > 1;
+  let source_map = if show_source {
+    source_map
+  } else {
+    HashMap::new()
+  };
+
+  print_results(&manifest, &source_map, term)
+}
+
+/// Prints every package matching `term`, with a `[source]` suffix per hit when
+/// `source_map` is non-empty.
+fn print_results(
+  manifest: &PackageIndex,
+  source_map: &HashMap<String, SourceId>,
+  term: &str,
+) -> AppResult<()> {
   let results = manifest.search(term);
 
   if results.is_empty() {
@@ -30,8 +78,14 @@ pub async fn run(client: &ThunderstoreClient, term: &str) -> AppResult<()> {
       package.owner.as_deref(),
       package.name.as_deref(),
     );
+    let source_suffix = package
+      .full_name
+      .as_deref()
+      .and_then(|name| source_map.get(name))
+      .map(|source| format!(" [{source}]"))
+      .unwrap_or_default();
 
-    println!("{identifier} ({version})");
+    println!("{identifier} ({version}){source_suffix}");
 
     if !description.is_empty() {
       println!("  {description}");
@@ -193,5 +247,46 @@ mod tests {
       "Owner-Unknown"
     );
     assert_eq!(package_identifier(None, None, None), "Unknown-Unknown");
+  }
+
+  #[test]
+  fn run_multi_with_one_source_matches_run() {
+    let fixture = crate::test_support::Fixture::new();
+
+    let result = Runtime::new()
+      .unwrap()
+      .block_on(run_multi(&fixture.sources(), None, "moda"));
+
+    assert!(result.is_ok());
+  }
+
+  #[test]
+  fn run_multi_searches_every_configured_source_by_default() {
+    let fixture = crate::test_support::Fixture::new();
+
+    // Hexium-OnlyMod exists on no other source, so finding it here proves both
+    // configured sources were actually searched, not just the first.
+    let result =
+      Runtime::new()
+        .unwrap()
+        .block_on(run_multi(&fixture.multi_sources(), None, "onlymod"));
+
+    assert!(result.is_ok());
+  }
+
+  #[test]
+  fn run_multi_with_source_filter_restricts_to_that_source() {
+    let fixture = crate::test_support::Fixture::new();
+
+    // Owner-ModA lives on Thunderstore only, so restricting the search to
+    // Hexium finds nothing, exercising the "no results" branch through the
+    // filtered path.
+    let result = Runtime::new().unwrap().block_on(run_multi(
+      &fixture.multi_sources(),
+      Some(SourceId::Hexium),
+      "moda",
+    ));
+
+    assert!(result.is_ok());
   }
 }

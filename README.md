@@ -8,13 +8,15 @@ A command-line tool for managing and automatically downloading Valheim mods and 
 
 ## Features
 
-- Installs mods and their full dependency closure from Thunderstore
+- Installs mods and their full dependency closure from Thunderstore or Hexium
 - Tracks what is installed in an r2modman-compatible `mods.yml`, so an install
   can be uninstalled exactly, without guessing from directory contents
 - Enables and disables mods in place, without uninstalling them
 - Installs into your game directory by default; named profiles are opt-in
 - Launches the game with a profile's mods applied
-- Exports and imports profiles as `.r2z` files or Thunderstore profile codes
+- Exports and imports profiles as `.r2z` files, Thunderstore/Gale profile codes, or
+  live r2modman/Gale profile directories, with an optional `--prune` to
+  reconcile a shrinking export
 - Shares one download and extraction cache across every target
 - Shows live progress while it works: a spinner for the package index fetch and
   a byte bar per mod download
@@ -55,6 +57,17 @@ The config file supports the following settings:
 - `[launch] store`: `steam`, `steam-direct`, or `other`
 - `[launch] runtime`: `native` or `proton`
 - `[launch] extra_args`: Extra arguments passed to the game on every launch
+- `[sources] enabled`: Which mod sources to resolve and install from, in
+  priority order. Defaults to `["thunderstore"]`; add `"hexium"` to also pull
+  from [Hexium](https://valheim.hexium.gg):
+  ```toml
+  [sources]
+  enabled = ["thunderstore", "hexium"]
+  ```
+  `vmm install --source hexium Owner-Mod` and `vmm search --source hexium`
+  restrict resolution to one source for that invocation. See
+  [How Source Resolution Works](#how-source-resolution-works) for exactly how sources are merged, which
+  source a shared mod resolves from, and which client downloads it.
 - `mod_list`: **Deprecated.** Superseded by `mods.yml`. Run `vmm migrate` to
   adopt it, then delete the key
 - `install_dir`: **Deprecated.** Superseded by `game_dir`. If only `install_dir`
@@ -100,6 +113,10 @@ delete `mod_list` from your config.
 # Install mods and their dependencies
 vmm install denikson-BepInExPack_Valheim ValheimModding-Jotunn
 
+# Force a specific mod to resolve from one configured source (its
+# dependencies still resolve from whichever configured source has them)
+vmm install --source hexium Owner-HexiumOnlyMod
+
 # List what is installed
 vmm list
 vmm list --format json
@@ -125,11 +142,14 @@ vmm uninstall --all --yes
 # Update every installed mod to its latest version
 vmm update mods
 
-# Refresh the cached package index
+# Refresh the cached package index (every configured source)
 vmm update manifest
 
-# Search Thunderstore
+# Search every configured source
 vmm search jotunn
+
+# Restrict a search to one source
+vmm search --source hexium jotunn
 ```
 
 `vmm enable --all` and `vmm disable --all` apply to every mod recorded in the
@@ -229,25 +249,74 @@ vmm export
 # Upload and print a shareable Thunderstore profile code
 vmm export --code
 
-# Import from a file, a profile code, or an r2modman profile directory
+# Import from a file, a profile code, an r2modman profile directory, or a
+# live Gale profile directory
 vmm import ./default_1753488000.r2z
 vmm import a1b2c3d4-0000-0000-0000-000000000000
 vmm import ~/.config/r2modmanPlus-local/Valheim/profiles/Default
+vmm import ~/.local/share/gale/valheim/profiles/Default
+
+# Also uninstall anything this target has that the re-imported source no
+# longer names (file or code sources only, see below)
+vmm import --prune ./default_1753488000.r2z
 ```
 
 A file or profile-code import installs each mod's **latest** version, not the
 version the export pinned, and prints what it installed so any difference is
-visible.
+visible. Every mod it names is resolved through the same multi-source merge
+`install` uses (see [How It Works](#how-it-works)), so a mod that only exists
+on a non-default configured source (e.g. Hexium) is still found, even though
+neither `.r2z` files nor profile codes have any field to record which source
+a mod was originally installed from.
 
-Importing a directory adopts it as-is at the versions the source recorded, and
-downloads nothing, with one exception: if the adopted `mods.yml` names a mod
-loader, the loader is reinstalled from Thunderstore afterward (at its
-**latest** version, same as above) so it gains the install record that makes
-it manageable and removable; a source naming no loader stays fully offline. It
-is also a raw copy with no pre-clean: if the destination already has different
-mods installed, `mods.yml` is overwritten while the previous mods' files stay
-on disk, now untracked and orphaned. Import into an empty target, or accept
-that leftover.
+A profile code is fetched from Thunderstore's `legacyprofile` endpoint by
+default. Gale uploads a profile to Hexium's identical endpoint instead when
+it contains a Hexium-exclusive mod, and warns that the code only works in
+Gale. That warning does not apply to vmm: when `hexium` is a configured
+source, `vmm import` checks Hexium's endpoint first and falls back to
+Thunderstore if the code is not found there.
+
+Importing an r2modman profile directory (one with a `mods.yml`) adopts it
+as-is at the versions the source recorded, and downloads nothing, with one
+exception: if the adopted `mods.yml` names a mod loader, the loader is
+reinstalled afterward (at its **latest** version, same as above, and resolved
+through that same multi-source merge) so it gains the install record that
+makes it manageable and removable; a source naming no loader stays fully
+offline. It is also a raw copy with no pre-clean: if the destination already
+has different mods installed, `mods.yml` is overwritten while the previous
+mods' files stay on disk, now untracked and orphaned. Import into an empty
+target, or accept that leftover.
+
+**Gale** keeps its live profile state in SQLite rather than a per-profile
+`mods.yml`, so a live Gale profile directory has mod files on disk but no
+record. Importing one is recognized automatically (a directory with no
+`mods.yml`) and, unlike an r2modman directory, reinstalls **every** mod it
+finds from the configured source(s) rather than merely copying files, since
+nothing can attribute a copied file to a specific mod by shape. Every mod
+therefore lands at its latest version, not necessarily the one Gale had
+pinned, and each is recorded in the `.vmm_sources.json` sidecar with whichever
+source actually supplied it. A Gale-exported `.r2z` file or shared profile
+code, by contrast, already works today unchanged through the ordinary file/code
+import path above; only a *live* Gale profile directory needs this route.
+
+### Reconciling a shrinking export with `--prune`
+
+`vmm import` is add-only by default: re-importing a file or profile code that
+dropped a mod leaves that mod installed. If you maintain a shared profile as
+the source of truth and periodically re-share it, `--prune` also uninstalls
+anything the target has that the freshly re-imported source no longer names,
+so the target actually converges on the source rather than only ever growing:
+
+```bash
+vmm import --prune a1b2c3d4-0000-0000-0000-000000000000
+```
+
+`--prune` is refused up front for a directory source (Gale or r2modman alike):
+a directory import is already a raw, non-reconciling copy of whatever is on
+disk, and prune has nothing well-defined to do there. A stale mod that cannot
+be removed exactly (for example, a mod loader adopted from a directory with no
+install record) is reported and left in place rather than failing the whole
+prune; anything else stale is still removed in the same run.
 
 ## Global Options
 
@@ -274,16 +343,60 @@ Downloads and cached data always go to `data_dir` (or `~/.config/vmm` if unset)
 regardless of which config file is used. Respects `$XDG_CONFIG_HOME` when
 `data_dir` is not set.
 
-## How It Works
+## How Source Resolution Works
 
 1. Resolves the target to operate on: `game_dir`, or a selected profile under
    `data_dir`
-2. Downloads the mod manifest from Thunderstore, caching it under `data_dir`
-3. Resolves the full dependency closure for the requested mods
-4. Downloads and extracts each package into the shared package cache, skipping
-   anything already fetched at the required version
-5. Installs each package into the target using the mod loader's install rules,
-   and records it in the target's `mods.yml`
+2. Fetches each configured source's package index (`[sources] enabled`,
+   `["thunderstore"]` unless you've opted into `"hexium"` too), caching each
+   one under `data_dir`, keyed by that source's own URL so multiple sources'
+   caches never collide
+3. **Merges every source's index into one**, walking sources in the order
+   `enabled` lists them:
+   - The first time a mod's full name (e.g. `Owner-ModName`) is seen, coming
+     from any source, it's added to the merged index tagged with that source.
+   - If the same full name turns up again from a later source, its
+     `date_updated` is compared against what's already in the merged index: a
+     **strictly newer** timestamp replaces the entry (and its source tag);
+     an equal or older one is dropped, leaving whichever source already had
+     it. A mod that exists on only one source is unaffected either way.
+   - Net effect: the most recently updated copy of a shared mod always wins,
+     and `enabled`'s order matters only as a **tie-break**; when two sources
+     report the exact same `date_updated` for the same mod, whichever is
+     listed earlier in `enabled` keeps its copy.
+   - `vmm install --source hexium <mod>` and `vmm search --source hexium
+     <term>` override this for the mods you name explicitly: that mod is
+     pinned to the named source regardless of `date_updated`, though its
+     dependencies still resolve through the ordinary merge above.
+4. Resolves the full dependency closure for the requested mods against that
+   one merged index. Dependency resolution itself has no notion of more than
+   one source; the merge in step 3 is the only thing multi-source changes
+5. Downloads and extracts each resolved package into the shared package
+   cache, skipping anything already fetched at the required version. Every
+   download goes through the **first-configured source's** HTTP client
+   (`enabled[0]`) regardless of which source the package actually resolved
+   from: a download is a plain request against the URL in that package's own
+   manifest entry, not one scoped to the client's own host, so any configured
+   source's client can fetch a file that resolved from any other
+6. Installs each package into the target using the mod loader's install
+   rules, records it in the target's `mods.yml`, and records which source it
+   actually resolved from in `.vmm_sources.json`, a sidecar next to
+   `mods.yml` (whose r2modman-compatible schema has no field of its own for
+   this) — written even with only `"thunderstore"` configured, not just once
+   a second source is added. `vmm list --format json` reports it per mod, and
+   `vmm uninstall` prunes an entry once its mod is gone; a mod with no
+   sidecar entry (installed before this sidecar existed) is reported as
+   `thunderstore`
+
+Steps 2 onward back every command that resolves mod names by full name:
+`install`, `update`, `search`, and all three `import` routes (a file, a
+profile code, or a directory). That last one matters because none of those
+profile interchange formats carry a per-mod source field, so importing a
+profile can never literally restore "the source a mod originally came from,"
+there is nothing recorded to restore. What it does instead is resolve every
+mod the import names through this same merged-index pipeline, so a mod that
+only exists on a non-default source (e.g. Hexium) is found and installed
+rather than failing simply because only the default source was ever checked.
 
 ## Directory Structure
 
@@ -292,7 +405,166 @@ regardless of which config file is used. Respects `$XDG_CONFIG_HOME` when
   under `data_dir/valheim/`
 - Your target directory (`game_dir`, or a profile directory under
   `data_dir/valheim/profiles/<name>/`) holds the installed mod files,
-  `mods.yml`, and any loader state
+  `mods.yml`, any loader state, and `.vmm_sources.json`, recording which
+  source each mod came from (see [How It Works](#how-it-works))
+
+## Adding vmm to the official community Docker image
+
+This section covers wiring `vmm` into
+[`ghcr.io/community-valheim-tools/valheim-server`](https://github.com/community-valheim-tools/valheim-server-docker),
+a community-maintained Valheim dedicated server image, so a running server
+container keeps its mods up to date on its own schedule. It needs no custom
+image or Dockerfile: the image already exposes documented `*_HOOK` environment
+variables that block startup or its update loop until a given shell command
+returns, and that hook surface is everything this integration uses.
+
+`thunderstore-engine` (vmm's backing crate) always installs relative to
+`game_dir` using a fixed shape: `<game_dir>/BepInEx/{plugins,config,
+patchers}`. Neither of the image's own BepInEx paths is that shape.
+`/opt/valheim/bepinex` is real-shaped (`BepInEx/plugins` etc. as siblings),
+but it is the image's live, ephemeral install. `bepinex-updater` rebuilds it
+from scratch (a fresh `rsync` into a `.tmp` directory, then swap) on every
+Valheim server update and every BepInEx pack update, so anything `vmm` wrote
+directly there would be wiped the next time either happens. `/config/bepinex`
+is the image's actual persistent volume and survives that, but it is
+flattened: `plugins/` and `patchers/` sit directly under it with no nested
+`BepInEx/` segment. The image's own `bepinex-updater` copies its contents
+into the live install on every boot and every update
+(`sync_bepinex_loadables` in the image's `common` script), and that copy is
+what actually keeps mods loaded across updates. This integration uses that
+same mechanism instead of duplicating it.
+
+So `game_dir` points at a small directory `vmm` owns exclusively,
+`/config/vmm_game`, whose `BepInEx/` subfolders are symlinks into
+`/config/bepinex`:
+
+```
+/config/vmm_game/BepInEx/plugins  -> /config/bepinex/plugins
+/config/vmm_game/BepInEx/patchers -> /config/bepinex/patchers
+/config/vmm_game/BepInEx/config   -> /config/bepinex
+```
+
+[`scripts/vmm-update-and-restart.sh`](scripts/vmm-update-and-restart.sh)
+creates these on every run, idempotently, so there is no separate setup
+step. `vmm` then writes through them exactly as it would into an ordinary
+game directory, but every file actually lands in `/config/bepinex`, the same
+directory the image's own docs tell you to drop plugins into by hand, and
+the same directory `bepinex-updater` already knows how to sync into the live
+install. Mods placed there by hand, before or alongside `vmm`, are picked up
+by the same sync; `vmm` just won't know about them (they carry no `mods.yml`
+entry, so `vmm list`/`vmm uninstall` won't see them). A mod's own `.cfg`,
+written the first time it runs, lands directly in `/config/bepinex/` (the
+`BepInEx/config` symlink points at `/config/bepinex` itself, not a subfolder
+of it). That is where to look to hand-edit a mod's settings.
+
+This does not cover every install route `thunderstore-engine` knows about.
+`BepInEx/core` (the loader itself) and `BepInEx/monomod` (MonoMod hook DLLs)
+are not symlinked, because the image's own sync only ever copies `plugins/`
+and `patchers/`. See step 4 of the setup below, "Limits of this approach".
+
+### Setup
+
+1. **`vmm_config.toml`**, committed or mounted at `/config/vmm_config.toml`:
+
+   ```toml
+   game_dir = "/config/vmm_game"
+   data_dir = "/config/vmm"
+
+   [sources]
+   enabled = ["hexium", "thunderstore"]
+   ```
+
+   Both live under `/config` so the package cache, `mods.yml`, and (via the
+   symlinks described above) the mods themselves all survive container
+   recreation. `game_dir` is the shim directory, not either of the image's
+   own BepInEx paths (see above). This uses only the current schema,
+   `game_dir` and `data_dir`, not the deprecated `mod_list`/`install_dir`/
+   `cache_dir` keys some other integrations write, which would be a schema
+   mismatch against this version of `vmm`. List `hexium` first if you use
+   it: a Gale-exported profile code for a Hexium-inclusive profile is hosted
+   on Hexium's endpoint, and `vmm import` tries sources in this order (see
+   [Sharing](#sharing)).
+
+2. **Environment variables**, added to the image's `docker run`/compose.
+   This has to happen before step 3: `vmm` is not on the container's `PATH`
+   until `POST_BOOTSTRAP_HOOK` puts it there, and that only runs when the
+   container is created or restarted.
+
+   ```bash
+   -e BEPINEX=true \
+   -e POST_BOOTSTRAP_HOOK='curl --proto "=https" --tlsv1.2 -LsSf <vmm-release-url>/valheim-mod-manager-installer.sh | VALHEIM_MOD_MANAGER_INSTALL_DIR=/usr/local/bin sh && curl --proto "=https" --tlsv1.2 -LsSf https://raw.githubusercontent.com/<your-fork>/valheim-mod-manager/master/scripts/vmm-update-and-restart.sh -o /usr/local/bin/vmm-update-and-restart.sh && chmod +x /usr/local/bin/vmm-update-and-restart.sh' \
+   -e POST_UPDATE_CHECK_HOOK='/usr/local/bin/vmm-update-and-restart.sh'
+   ```
+
+   `POST_BOOTSTRAP_HOOK` runs once after bootstrap, before any service
+   starts. The first `curl` fetches vmm's own prebuilt static binary onto
+   the container's `PATH` using its cargo-dist installer script; no compiler
+   needed in the image. The second `curl` fetches
+   [`scripts/vmm-update-and-restart.sh`](scripts/vmm-update-and-restart.sh)
+   from the repo and installs it alongside `vmm`. Both run on every
+   bootstrap, so there is no separate manual copy step and nothing to keep
+   in sync with the persistent `/config` volume; if you'd rather not depend
+   on a network fetch for the script, copy it onto `/config` yourself instead
+   and point `POST_UPDATE_CHECK_HOOK` at that path.
+
+   `POST_UPDATE_CHECK_HOOK` runs on the image's existing `valheim-updater`
+   schedule (`UPDATE_CRON`, default `*/15 * * * *`). The script first creates
+   `game_dir`'s `BepInEx/{plugins,patchers,config}` symlinks into
+   `/config/bepinex` if they are missing or wrong (idempotent, so this costs
+   nothing on ordinary runs), then runs `vmm update manifest && vmm
+   update mods`, then restarts the `valheim-server` process via
+   `supervisorctl` if something actually changed. It compares `vmm list
+   --format json` before and after, trimmed to the JSON payload itself:
+   `vmm`'s own tracing output goes to stdout too and is timestamped, so a
+   raw capture would report a change on every run.
+
+3. **Install your mods once against the container.** The BepInEx install and
+   everything inside it is root-owned, and every process that touches it
+   (SteamCMD, `valheim-updater`, the game server itself) runs as root inside
+   the container, so `vmm` has to run there too, not from the host against
+   the bind-mounted directory. Use `docker exec` to run it, or `docker exec
+   -it valheim-server sh` to open a shell and run it directly from there:
+
+   ```bash
+   docker exec -i valheim-server vmm --config /config/vmm_config.toml import \
+     a1b2c3d4-0000-0000-0000-000000000000
+   # or a file export
+   docker exec -i valheim-server vmm --config /config/vmm_config.toml import \
+     /path/to/exported.r2z
+   # or naming mods directly
+   docker exec -i valheim-server vmm --config /config/vmm_config.toml install \
+     Owner-Mod1 Owner-Mod2
+   ```
+
+   This is the same imperative, `mods.yml`-backed install flow as a local
+   `vmm install`/`vmm import`; nothing Docker-specific about it. Add
+   `--source hexium` to `install` for a Hexium-only mod. If you're migrating
+   mods that were previously placed by hand, this reinstalls each one at its
+   **latest** version, not whatever was previously pinned; check your old
+   versions first if any were intentionally held back. Restart once
+   afterward to confirm the server loads cleanly from `vmm`'s install.
+
+4. **Limits of this approach.**
+
+     Every mod that depends on the BepInEx loader re-triggers the loader's
+     own dependency resolution on every `update mods` run, so `vmm` reinstalls
+     it into `game_dir` alongside the mods that need it. `BepInEx/core` is
+     not one of the symlinked routes, though, so that copy lands in
+     `/config/vmm_game/BepInEx/core` and never reaches the image's live
+     install. This is expected: `BEPINEX=true` already fully owns installing
+     and updating the actual loader (it's what sets up the doorstop
+     `LD_PRELOAD` hook, so it cannot be turned off), so `vmm`'s copy is left
+     inert on purpose rather than competing with it for writes to the same
+     live location.
+
+     `BepInEx/monomod` (MonoMod hook DLLs, used by a small minority of mods)
+     is not symlinked either, for a different reason: the image's own sync
+     only ever copies `plugins/` and `patchers/` out of `/config/bepinex`.
+     Even a mod placed there entirely by hand, with no `vmm` involved, would
+     not reach the live install. This is a pre-existing limitation of the
+     image itself. It is not something this integration introduces, and it
+     cannot be worked around without symlinking a folder the image's own
+     sync never reads.
 
 ## Troubleshooting
 
@@ -311,4 +583,5 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 ## Acknowledgments
 
 - [Thunderstore](https://thunderstore.io) for hosting Valheim mods
+- [Hexium](https://hexium.gg) for hosting Valheim mods
 - The amazing Valheim modding community

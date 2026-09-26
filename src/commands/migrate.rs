@@ -152,6 +152,16 @@ pub async fn run(
 
   super::report_installed(target, &outcome.adopted)?;
 
+  // `mod_list` predates Hexium support, so everything it names came from
+  // Thunderstore.
+  crate::sources::record_sources(
+    target,
+    outcome
+      .adopted
+      .iter()
+      .map(|name| (name.clone(), crate::sources::SourceId::Thunderstore)),
+  )?;
+
   for dir in &outcome.swept {
     println!("swept stale folder {}", dir.display());
   }
@@ -543,5 +553,33 @@ mod tests {
     // because the gate is the only thing between the two.
     hint_if_unmigrated(&target, &config_with(&[]));
     hint_if_unmigrated(&target, &config_with(&["Owner-ModA"]));
+  }
+
+  #[test]
+  fn migrating_records_every_adopted_mod_as_thunderstore() {
+    let fixture = Fixture::new();
+    let target = fixture.target();
+    let eco = Ecosystem::bundled();
+
+    Runtime::new()
+      .unwrap()
+      .block_on(run(
+        &fixture.client,
+        &eco,
+        &target,
+        &config_with(&["Owner-ModA", "Owner-ModB"]),
+      ))
+      .unwrap();
+
+    let sources = crate::sources::read_sources(&target);
+
+    assert_eq!(
+      sources.get("Owner-ModA"),
+      Some(&crate::sources::SourceId::Thunderstore)
+    );
+    assert_eq!(
+      sources.get("Owner-ModB"),
+      Some(&crate::sources::SourceId::Thunderstore)
+    );
   }
 }

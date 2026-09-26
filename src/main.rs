@@ -4,6 +4,7 @@ mod config;
 mod error;
 mod logs;
 mod progress;
+mod sources;
 mod target;
 #[cfg(test)]
 mod test_support;
@@ -195,20 +196,26 @@ async fn run() -> AppResult<()> {
   tracing::info!("Starting valheim mod manager");
 
   let base = config.base_dir();
+  let progress: Arc<dyn thunderstore_engine::progress::ProgressReporter> =
+    Arc::new(IndicatifProgress::new());
 
   let client = ThunderstoreClient::builder()
     .base_url(BASE_URL)
     .community(COMMUNITY)
     .cache_dir(&base)
-    .progress(Arc::new(IndicatifProgress::new()))
+    .progress(progress.clone())
     .build()?;
+
+  let mod_sources = sources::build_sources(&config.enabled_sources(), &base, progress.clone())?;
 
   // Commands that never touch an install target dispatch before one is
   // resolved, so they work with no `game_dir` configured.
   match &app.command {
-    Command::Search(args) => return commands::search::run(&client, &args.term).await,
+    Command::Search(args) => {
+      return commands::search::run_multi(&mod_sources, args.source, &args.term).await;
+    }
     Command::Update(sub) if matches!(sub.command, UpdatesCommand::Manifest) => {
-      return commands::update::run_manifest(&client).await;
+      return commands::update::run_manifest_multi(&mod_sources).await;
     }
     Command::Profile(args) => return commands::profile::run(&base, &args.command),
     _ => {}
@@ -240,12 +247,21 @@ async fn run() -> AppResult<()> {
     // but a third `UpdatesCommand` variant must not silently reinstall every
     // recorded mod, so the compiler is made to demand an arm for it.
     Command::Update(sub) => match sub.command {
-      UpdatesCommand::Mods => commands::update::run_mods(&client, &ecosystem, &target).await?,
+      UpdatesCommand::Mods => {
+        commands::update::run_mods_with_sources(&mod_sources, &ecosystem, &target).await?
+      }
       UpdatesCommand::Manifest => unreachable!("dispatched before target resolution"),
     },
     Command::List(list_args) => commands::list::run(&target, &list_args.format)?,
     Command::Install(args) => {
-      commands::install::run(&client, &ecosystem, &target, &args.mods).await?
+      commands::install::run_with_sources(
+        &mod_sources,
+        args.source,
+        &ecosystem,
+        &target,
+        &args.mods,
+      )
+      .await?
     }
     Command::Uninstall(args) => match args.all {
       true => commands::uninstall::run_all(
@@ -273,7 +289,15 @@ async fn run() -> AppResult<()> {
       false => commands::portability::export_file(&target)?,
     },
     Command::Import(args) => {
-      commands::portability::import(&client, &ecosystem, &target, &args.source).await?
+      commands::portability::import(
+        &client,
+        &ecosystem,
+        &target,
+        &args.source,
+        args.prune,
+        &mod_sources,
+      )
+      .await?
     }
     Command::Search(_) | Command::Profile(_) => {
       unreachable!("dispatched before target resolution")

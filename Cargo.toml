@@ -1,6 +1,6 @@
 [package]
 name = "valheim-mod-manager"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 description = "Mod manager for Valheim game"
 authors = ["Endoze <endoze@endozemedia.com>", "LinkTheDot <CirnoStrongest9909@hotmail.com>"]
@@ -23,10 +23,20 @@ path = "src/main.rs"
 
 [dependencies]
 thunderstore-engine = "0.1.0"
+async-trait = "0.1"
+base64 = "0.23"
 config = "0.15"
 clap = { version = "4.5", features = ["derive"] }
 dirs = "6.0"
 indicatif = "0.18"
+# Feature-unified with thunderstore-engine's own (default-featured) reqwest
+# dependency: no TLS/JSON features are requested from this edge, since
+# thunderstore-engine's default `rustls-tls` feature already turns on
+# `reqwest/rustls` for the one resolved reqwest crate the whole build shares.
+# Used only for Hexium's manifest fetch (see `sources.rs`), which bypasses
+# `ThunderstoreClient::get_manifest()` because Hexium's live index never sends
+# the `Last-Modified` header that method requires.
+reqwest = { version = "0.13", default-features = false }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 shellexpand = "3.1"
@@ -37,7 +47,6 @@ tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter", "json"] }
 
 [dev-dependencies]
-base64 = "0.23"
 mockito = "1.2.0"
 tempfile = "3.10.1"
 tokio-test = "0.4.3"

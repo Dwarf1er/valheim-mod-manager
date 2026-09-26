@@ -54,7 +54,23 @@ pub fn run(eco: &Ecosystem, target: &Target, mods: &[String], force: bool) -> Ap
     println!("removed {name}");
   }
 
+  prune_stale_sources(target)?;
+
   super::report_batch_failures(&outcome)
+}
+
+/// Drops the `.vmm_sources.json` sidecar's entries for anything no longer in
+/// `mods.yml`, so it never outlives what is actually installed. Called after
+/// every uninstall that ran (even a partial one, since `succeeded` items are
+/// genuinely gone either way).
+fn prune_stale_sources(target: &Target) -> AppResult<()> {
+  let keep: std::collections::HashSet<String> = modlist::read(&target.dir)
+    .unwrap_or_default()
+    .into_iter()
+    .map(|entry| entry.name)
+    .collect();
+
+  crate::sources::prune_sources(target, &keep)
 }
 
 /// Plans an uninstall batch, wording the engine's typed refusal as vmm's two
@@ -227,6 +243,8 @@ pub fn run_all(
   if let Some(summary) = removed_summary(&outcome.succeeded, &batch, target) {
     println!("{summary}");
   }
+
+  prune_stale_sources(target)?;
 
   super::report_batch_failures(&outcome)
 }
@@ -1135,5 +1153,73 @@ mod tests {
     let message = no_terminal_error(&target, &batch).to_string();
 
     assert!(message.contains("--yes"), "got: {message}");
+  }
+
+  #[test]
+  fn uninstalling_a_mod_prunes_its_sidecar_entry_but_keeps_survivors() {
+    let fixture = Fixture::new();
+    let target = fixture.target();
+    let eco = Ecosystem::bundled();
+
+    Runtime::new()
+      .unwrap()
+      .block_on(crate::commands::install::run(
+        &fixture.client,
+        &eco,
+        &target,
+        &["Owner-ModA".to_string(), "Owner-ModB".to_string()],
+      ))
+      .unwrap();
+
+    crate::sources::record_sources(
+      &target,
+      [
+        (
+          "Owner-ModA".to_string(),
+          crate::sources::SourceId::Thunderstore,
+        ),
+        ("Owner-ModB".to_string(), crate::sources::SourceId::Hexium),
+      ],
+    )
+    .unwrap();
+
+    run(&eco, &target, &["Owner-ModB".to_string()], false).unwrap();
+
+    let sources = crate::sources::read_sources(&target);
+
+    assert_eq!(sources.len(), 1);
+    assert_eq!(
+      sources.get("Owner-ModA"),
+      Some(&crate::sources::SourceId::Thunderstore)
+    );
+    assert!(!sources.contains_key("Owner-ModB"));
+  }
+
+  #[test]
+  fn uninstalling_everything_clears_the_sidecar() {
+    let fixture = Fixture::new();
+    let target = fixture.target();
+    let eco = Ecosystem::bundled();
+
+    Runtime::new()
+      .unwrap()
+      .block_on(crate::commands::install::run(
+        &fixture.client,
+        &eco,
+        &target,
+        &["Owner-ModA".to_string()],
+      ))
+      .unwrap();
+
+    crate::sources::record_source(
+      &target,
+      "Owner-ModA",
+      crate::sources::SourceId::Thunderstore,
+    )
+    .unwrap();
+
+    run_all(&eco, &target, false, true, unreachable_confirm).unwrap();
+
+    assert!(crate::sources::read_sources(&target).is_empty());
   }
 }
