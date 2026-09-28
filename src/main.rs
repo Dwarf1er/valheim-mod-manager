@@ -254,14 +254,7 @@ async fn run() -> AppResult<()> {
     },
     Command::List(list_args) => commands::list::run(&target, &list_args.format)?,
     Command::Install(args) => {
-      commands::install::run_with_sources(
-        &mod_sources,
-        args.source,
-        &ecosystem,
-        &target,
-        &args.mods,
-      )
-      .await?
+      commands::install::run_with_sources(&mod_sources, &ecosystem, &target, &args.mods).await?
     }
     Command::Uninstall(args) => match args.all {
       true => commands::uninstall::run_all(

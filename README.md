@@ -64,8 +64,8 @@ The config file supports the following settings:
   [sources]
   enabled = ["thunderstore", "hexium"]
   ```
-  `vmm install --source hexium Owner-Mod` and `vmm search --source hexium`
-  restrict resolution to one source for that invocation. See
+  `vmm search --source hexium` restricts a search to one source for that
+  invocation. See
   [How Source Resolution Works](#how-source-resolution-works) for exactly how sources are merged, which
   source a shared mod resolves from, and which client downloads it.
 - `mod_list`: **Deprecated.** Superseded by `mods.yml`. Run `vmm migrate` to
@@ -112,10 +112,6 @@ delete `mod_list` from your config.
 ```bash
 # Install mods and their dependencies
 vmm install denikson-BepInExPack_Valheim ValheimModding-Jotunn
-
-# Force a specific mod to resolve from one configured source (its
-# dependencies still resolve from whichever configured source has them)
-vmm install --source hexium Owner-HexiumOnlyMod
 
 # List what is installed
 vmm list
@@ -364,10 +360,8 @@ regardless of which config file is used. Respects `$XDG_CONFIG_HOME` when
      and `enabled`'s order matters only as a **tie-break**; when two sources
      report the exact same `date_updated` for the same mod, whichever is
      listed earlier in `enabled` keeps its copy.
-   - `vmm install --source hexium <mod>` and `vmm search --source hexium
-     <term>` override this for the mods you name explicitly: that mod is
-     pinned to the named source regardless of `date_updated`, though its
-     dependencies still resolve through the ordinary merge above.
+   - `vmm search --source hexium <term>` only filters which catalogs are
+     queried and displayed; it does not change how a mod is resolved.
 4. Resolves the full dependency closure for the requested mods against that
    one merged index. Dependency resolution itself has no notion of more than
    one source; the merge in step 3 is the only thing multi-source changes
@@ -537,8 +531,9 @@ and `patchers/`. See step 4 of the setup below, "Limits of this approach".
    ```
 
    This is the same imperative, `mods.yml`-backed install flow as a local
-   `vmm install`/`vmm import`; nothing Docker-specific about it. Add
-   `--source hexium` to `install` for a Hexium-only mod. If you're migrating
+   `vmm install`/`vmm import`; nothing Docker-specific about it. A mod that
+   exists only on Hexium resolves automatically once `hexium` is in
+   `[sources] enabled`. If you're migrating
    mods that were previously placed by hand, this reinstalls each one at its
    **latest** version, not whatever was previously pinned; check your old
    versions first if any were intentionally held back. Restart once

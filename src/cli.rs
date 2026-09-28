@@ -59,11 +59,6 @@ pub struct ModsArgs {
   /// One or more `Owner-ModName` identifiers.
   #[arg(required = true)]
   pub mods: Vec<String>,
-  /// Force these mods to resolve from this source, even if another configured
-  /// source would otherwise win. Their dependencies still resolve from
-  /// whichever configured source has them.
-  #[arg(long, value_enum)]
-  pub source: Option<SourceId>,
 }
 
 /// Arguments for the uninstall command.

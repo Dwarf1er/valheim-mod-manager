@@ -205,12 +205,8 @@ async fn import_zip_with_sources(
   sources: &[Box<dyn ModSource>],
   zip_bytes: &[u8],
 ) -> AppResult<(Vec<String>, HashMap<String, SourceId>)> {
-  let (index, source_map) = crate::sources::merged_manifest(
-    &crate::sources::as_refs(sources),
-    false,
-    &Default::default(),
-  )
-  .await?;
+  let (index, source_map) =
+    crate::sources::merged_manifest(&crate::sources::as_refs(sources), false).await?;
   let download_client = crate::sources::first_download_client(sources)?;
 
   let installed = portability::import_r2z_in(
@@ -279,12 +275,8 @@ async fn import_r2modman_dir_with_sources(
     return Ok(profile);
   }
 
-  let (index, source_map) = crate::sources::merged_manifest(
-    &crate::sources::as_refs(sources),
-    false,
-    &Default::default(),
-  )
-  .await?;
+  let (index, source_map) =
+    crate::sources::merged_manifest(&crate::sources::as_refs(sources), false).await?;
   let download_client = crate::sources::first_download_client(sources)?;
 
   for full_name in &unrecorded {
@@ -347,12 +339,8 @@ async fn import_gale_dir(
     return Ok(());
   }
 
-  let (index, source_map) = crate::sources::merged_manifest(
-    &crate::sources::as_refs(sources),
-    false,
-    &Default::default(),
-  )
-  .await?;
+  let (index, source_map) =
+    crate::sources::merged_manifest(&crate::sources::as_refs(sources), false).await?;
   let download_client = crate::sources::first_download_client(sources)?;
 
   let outcome = portability::adopt_names_in(
@@ -762,10 +750,7 @@ mod tests {
     // all, this would fail rather than silently succeeding.
     fixture
       .hexium_server
-      .mock(
-        "GET",
-        "/api/experimental/legacyprofile/get/hexium-code/",
-      )
+      .mock("GET", "/api/experimental/legacyprofile/get/hexium-code/")
       .with_status(200)
       .with_body(payload)
       .create();
@@ -1363,7 +1348,6 @@ mod tests {
     runtime
       .block_on(crate::commands::install::run_with_sources(
         &fixture.multi_sources(),
-        None,
         &eco,
         &source,
         &["Hexium-OnlyMod".to_string()],
@@ -1415,7 +1399,6 @@ mod tests {
     runtime
       .block_on(crate::commands::install::run_with_sources(
         &fixture.multi_sources(),
-        None,
         &eco,
         &source,
         &["Hexium-OnlyMod".to_string()],

@@ -1,7 +1,6 @@
 use crate::error::AppResult;
 use crate::sources::ModSource;
 use crate::target::{GAME, Target};
-use std::collections::HashMap;
 use thunderstore_engine::client::ThunderstoreClient;
 use thunderstore_engine::ecosystem::Ecosystem;
 use thunderstore_engine::profile;
@@ -79,8 +78,7 @@ pub async fn run_mods_with_sources(
   let desired: Vec<String> = installed.iter().map(|entry| entry.name.clone()).collect();
 
   let (index, source_map) =
-    crate::sources::merged_manifest(&crate::sources::as_refs(sources), false, &HashMap::new())
-      .await?;
+    crate::sources::merged_manifest(&crate::sources::as_refs(sources), false).await?;
   let download_client = crate::sources::first_download_client(sources)?;
 
   update_mods_with_index(download_client, &index, eco, target, &desired).await?;
@@ -264,7 +262,6 @@ mod tests {
     runtime
       .block_on(crate::commands::install::run_with_sources(
         &fixture.multi_sources(),
-        None,
         &eco,
         &target,
         &["Hexium-OnlyMod".to_string()],

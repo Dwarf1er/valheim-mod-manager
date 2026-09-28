@@ -330,14 +330,9 @@ pub fn first_download_client(sources: &[Box<dyn ModSource>]) -> AppResult<&Thund
 /// ever round-tripped through the on-disk cache). The collision is logged at
 /// `info`.
 ///
-/// `forced` overrides that rule for specific full names (`vmm install --source
-/// hexium Owner-Mod`): only the named source's version of that name is
-/// considered at all, regardless of `date_updated`. Pass an empty map for the
-/// ordinary (unforced) merge.
 pub async fn merged_manifest(
   sources: &[&dyn ModSource],
   refresh: bool,
-  forced: &HashMap<String, SourceId>,
 ) -> AppResult<(PackageIndex, HashMap<String, SourceId>)> {
   let mut by_full_name: HashMap<String, (Package, SourceId)> = HashMap::new();
 
@@ -351,14 +346,6 @@ pub async fn merged_manifest(
       let Some(full_name) = package.full_name.clone() else {
         continue;
       };
-
-      if let Some(&wanted) = forced.get(&full_name) {
-        if source.id() == wanted {
-          by_full_name.insert(full_name, (package, source.id()));
-        }
-
-        continue;
-      }
 
       match by_full_name.get(&full_name) {
         Some((existing, existing_source)) if existing.date_updated >= package.date_updated => {
@@ -530,7 +517,7 @@ mod tests {
 
     let (index, map) = tokio::runtime::Runtime::new()
       .unwrap()
-      .block_on(merged_manifest(&as_refs(&sources), false, &HashMap::new()))
+      .block_on(merged_manifest(&as_refs(&sources), false))
       .unwrap();
 
     // Owner-ModA (Thunderstore) and Hexium-OnlyMod (Hexium only) both resolve
@@ -548,7 +535,7 @@ mod tests {
 
     let (index, map) = tokio::runtime::Runtime::new()
       .unwrap()
-      .block_on(merged_manifest(&as_refs(&sources), false, &HashMap::new()))
+      .block_on(merged_manifest(&as_refs(&sources), false))
       .unwrap();
 
     // Owner-Shared is seeded with a newer `date_updated` on Hexium than on
@@ -560,25 +547,5 @@ mod tests {
     let package = index.get_package_at(idx).unwrap();
 
     assert_eq!(package.versions.len(), 1);
-  }
-
-  #[test]
-  fn forcing_a_source_bypasses_the_collision_rule_for_that_name_only() {
-    let fixture = Fixture::new();
-    let sources = fixture.multi_sources();
-
-    let mut forced = HashMap::new();
-    forced.insert("Owner-Shared".to_string(), SourceId::Thunderstore);
-
-    let (_, map) = tokio::runtime::Runtime::new()
-      .unwrap()
-      .block_on(merged_manifest(&as_refs(&sources), false, &forced))
-      .unwrap();
-
-    // Forced to Thunderstore even though Hexium's copy is newer.
-    assert_eq!(map.get("Owner-Shared"), Some(&SourceId::Thunderstore));
-    // Everything else still resolves by the ordinary rule.
-    assert_eq!(map.get("Owner-ModA"), Some(&SourceId::Thunderstore));
-    assert_eq!(map.get("Hexium-OnlyMod"), Some(&SourceId::Hexium));
   }
 }

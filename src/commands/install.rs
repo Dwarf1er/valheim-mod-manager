@@ -1,7 +1,6 @@
 use crate::error::AppResult;
-use crate::sources::{ModSource, SourceId};
+use crate::sources::ModSource;
 use crate::target::{GAME, Target};
-use std::collections::HashMap;
 use thunderstore_engine::client::ThunderstoreClient;
 use thunderstore_engine::ecosystem::Ecosystem;
 use thunderstore_engine::models::PackageIndex;
@@ -40,29 +39,20 @@ pub async fn run(
 /// [`run`], resolving against every configured source's merged manifest rather
 /// than Thunderstore alone.
 ///
-/// `forced_source`, when set, forces every name in `mods` to resolve from that
-/// source specifically (see [`crate::sources::merged_manifest`]'s `forced`
-/// parameter) — their dependencies still resolve from whichever configured
-/// source has them. Downloads go through `sources[0]`'s client: any one
-/// source's client can download a file resolved from any other source, since
-/// the engine's download layer is not scoped to a client's own `base_url`.
+/// Downloads go through `sources[0]`'s client: any one source's client can
+/// download a file resolved from any other source, since the engine's download
+/// layer is not scoped to a client's own `base_url`.
 ///
 /// Records which source each succeeded mod came from in the target's
 /// `.vmm_sources.json` sidecar.
 pub async fn run_with_sources(
   sources: &[Box<dyn ModSource>],
-  forced_source: Option<SourceId>,
   eco: &Ecosystem,
   target: &Target,
   mods: &[String],
 ) -> AppResult<()> {
-  let forced: HashMap<String, SourceId> = match forced_source {
-    Some(id) => mods.iter().map(|name| (name.clone(), id)).collect(),
-    None => HashMap::new(),
-  };
-
   let (index, source_map) =
-    crate::sources::merged_manifest(&crate::sources::as_refs(sources), false, &forced).await?;
+    crate::sources::merged_manifest(&crate::sources::as_refs(sources), false).await?;
   let download_client = crate::sources::first_download_client(sources)?;
 
   let outcome = install_with_index(download_client, &index, eco, target, mods).await?;
@@ -431,7 +421,6 @@ mod tests {
       .unwrap()
       .block_on(run_with_sources(
         &fixture.multi_sources(),
-        None,
         &eco,
         &target,
         &["Hexium-OnlyMod".to_string()],
@@ -462,7 +451,6 @@ mod tests {
       .unwrap()
       .block_on(run_with_sources(
         &fixture.multi_sources(),
-        None,
         &eco,
         &target,
         &["Owner-ModA".to_string()],
@@ -473,41 +461,6 @@ mod tests {
 
     assert_eq!(
       recorded.get("Owner-ModA"),
-      Some(&crate::sources::SourceId::Thunderstore)
-    );
-  }
-
-  #[test]
-  fn forcing_a_source_overrides_the_collision_winner_for_the_named_mod() {
-    let fixture = Fixture::new();
-    let target = fixture.target();
-    let eco = Ecosystem::bundled();
-
-    // Owner-Shared exists on both sources with Hexium's copy newer, so an
-    // unforced install would resolve it from Hexium. `--source thunderstore`
-    // forces the explicitly named mod to Thunderstore instead.
-    Runtime::new()
-      .unwrap()
-      .block_on(run_with_sources(
-        &fixture.multi_sources(),
-        Some(crate::sources::SourceId::Thunderstore),
-        &eco,
-        &target,
-        &["Owner-Shared".to_string()],
-      ))
-      .unwrap();
-
-    let mods = modlist::read(&target.dir).unwrap();
-
-    assert_eq!(
-      modlist::find(&mods, "Owner-Shared").unwrap().name,
-      "Owner-Shared"
-    );
-
-    let recorded = crate::sources::read_sources(&target);
-
-    assert_eq!(
-      recorded.get("Owner-Shared"),
       Some(&crate::sources::SourceId::Thunderstore)
     );
   }

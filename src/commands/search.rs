@@ -31,8 +31,7 @@ pub async fn run_multi(
     None => crate::sources::as_refs(sources),
   };
 
-  let (manifest, source_map) =
-    crate::sources::merged_manifest(&selected, false, &HashMap::new()).await?;
+  let (manifest, source_map) = crate::sources::merged_manifest(&selected, false).await?;
 
   let show_source = selected.len() > 1;
   let source_map = if show_source {
