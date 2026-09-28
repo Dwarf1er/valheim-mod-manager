@@ -19,8 +19,7 @@ use thunderstore_engine::profile::{self, NotRemovable, UninstallBatch, modlist};
 /// it to `remove_delisted`, which deletes every `<Owner-Name>`-shaped folder
 /// under every namespaced route that the keep-set does not name. In game-dir
 /// mode that route tree is the user's live game directory, so a mod folder
-/// placed there by hand, or by r2modman, or by an older vmm whose `mod_list`
-/// was never migrated, is swept along with the mod actually being
+/// placed there by hand, or by r2modman, is swept along with the mod actually being
 /// uninstalled. Rather than silently deleting somebody else's install, the
 /// planned batch's `untracked` list names exactly those folders and
 /// [`untracked_error`] refuses the whole command with them, unless `force`
@@ -147,13 +146,12 @@ fn untracked_error(target: &Target, batch: &UninstallBatch) -> AppError {
       "An uninstall reconciles every install route against {}, so these \
        would be deleted along with the mods you named:\n\n  {}\n\nNothing \
        was removed. Bring them under management with `vmm install \
-       <Owner-ModName>` if you installed them by hand, or `vmm migrate` if \
-       they're left over from a deprecated `mod_list`. Otherwise, re-run \
+       <Owner-ModName>` if you installed them by hand. Otherwise, re-run \
        with `--force` to delete them too.",
       target.mods_yml().display(),
       render_untracked(&batch.untracked)
     ),
-    &["vmm install <Owner-ModName>", "vmm migrate"],
+    &["vmm install <Owner-ModName>"],
   )
 }
 

@@ -23,7 +23,6 @@ use std::cell::LazyCell;
 use std::sync::Arc;
 use thunderstore_engine::client::ThunderstoreClient;
 use thunderstore_engine::ecosystem::Ecosystem;
-use thunderstore_engine::profile::layout;
 
 /// Thunderstore's canonical host.
 ///
@@ -46,67 +45,13 @@ const COMMUNITY: &str = "valheim";
 fn require_game_dir(config: &config::AppConfig) -> &str {
   match config.game_dir_status() {
     GameDirStatus::Set(dir) => dir,
-    GameDirStatus::NeedsMigration => {
-      report_and_exit(needs_migration_error(config.install_dir.as_deref()))
-    }
     GameDirStatus::Unset => report_and_exit(unset_game_dir_error()),
   }
 }
 
-/// The refusal [`require_game_dir`] exits with when a config predating
-/// `game_dir` is still carrying the deprecated `install_dir`.
-///
-/// Takes the old `install_dir` rather than the whole config because it is the
-/// only thing the wording turns on: a value [`config::suggest_game_dir`] can
-/// read a game root out of earns the exact line to paste, and anything else
-/// falls back to the generic example.
-///
-/// Pulled out as a pure function so both wordings are testable, the same way
-/// [`missing_game_dir_error`] is. [`require_game_dir`] ends in
-/// [`report_and_exit`], which never returns, so this is the only way the
-/// message every upgrading user meets can be inspected at all.
-fn needs_migration_error(install_dir: Option<&str>) -> AppError {
-  let suggested = install_dir.and_then(config::suggest_game_dir);
-
-  let detail = match &suggested {
-    Some(dir) => format!(
-      "`install_dir` is no longer used. Its meaning changed: vmm now installs into\n\
-       your game root using the loader's install rules (an r2modman-compatible\n\
-       layout) and manages BepInEx itself.\n\n\
-       Based on your old `install_dir`, your game root is probably:\n\n\
-       \x20   game_dir = \"{dir}\"\n\n\
-       Then remove the now-unused `install_dir`. Because the on-disk layout changed,\n\
-       start from a clean BepInEx setup (delete the existing `BepInEx/plugins`\n\
-       contents, or the whole `BepInEx` folder) so stale files from the old layout\n\
-       don't linger, then re-run `vmm update mods`.\n\n\
-       Nothing was changed."
-    ),
-    None => format!(
-      "`install_dir` is no longer used. Its meaning changed: vmm now installs into\n\
-       your game root using the loader's install rules (an r2modman-compatible\n\
-       layout) and manages BepInEx itself.\n\n\
-       Set `game_dir` to your Valheim game folder (the directory containing the\n\
-       game executable, where BepInEx lives), for example:\n\n\
-       \x20   game_dir = \"{example}\"\n\n\
-       Then remove the now-unused `install_dir`. Because the on-disk layout changed,\n\
-       start from a clean BepInEx setup (delete the existing `BepInEx/plugins`\n\
-       contents, or the whole `BepInEx` folder) so stale files from the old layout\n\
-       don't linger, then re-run `vmm update mods`.\n\n\
-       Nothing was changed.",
-      example = config::example_game_dir(),
-    ),
-  };
-
-  AppError::advice(
-    "your configuration needs migrating before mods can be installed.",
-    detail,
-    &[],
-  )
-}
-
-/// The refusal [`require_game_dir`] exits with when neither `game_dir` nor the
-/// deprecated `install_dir` is set, which is a fresh config rather than an
-/// upgraded one. Pulled out for the same reason as [`needs_migration_error`].
+/// The refusal [`require_game_dir`] exits with when `game_dir` is not set.
+/// Pulled out as a pure function so the wording is testable, since
+/// [`require_game_dir`] ends in [`report_and_exit`], which never returns.
 fn unset_game_dir_error() -> AppError {
   AppError::advice(
     "`game_dir` is not set, so there is nowhere to install mods.",
@@ -218,7 +163,6 @@ async fn run() -> AppResult<()> {
     Command::Update(sub) if matches!(sub.command, UpdatesCommand::Manifest) => {
       return commands::update::run_manifest_multi(&mod_sources).await;
     }
-    Command::Profile(args) => return commands::profile::run(&base, &args.command),
     _ => {}
   }
 
@@ -228,16 +172,7 @@ async fn run() -> AppResult<()> {
     return Err(missing_game_dir_error(&game_dir));
   }
 
-  let persisted = layout::read_selection(&base, target::GAME);
-  let profile =
-    layout::select_profile(app.profile.as_deref(), app.no_profile, persisted.as_deref());
-  let target = target::resolve(base, game_dir, profile.as_deref())?;
-
-  // Skipped for `migrate` itself: it would print "run `vmm migrate`" as the
-  // immediately preceding line to a command that's about to do exactly that.
-  if !matches!(app.command, Command::Migrate) {
-    commands::migrate::hint_if_unmigrated(&target, &config);
-  }
+  let target = target::resolve(base, game_dir)?;
 
   // The bundled snapshot is zstd-decompressed and parsed on construction, so
   // build it only if a command actually consults the install rules.
@@ -269,15 +204,6 @@ async fn run() -> AppResult<()> {
     },
     Command::Enable(args) => toggle_dispatch(&ecosystem, &target, args, true)?,
     Command::Disable(args) => toggle_dispatch(&ecosystem, &target, args, false)?,
-    Command::Migrate => commands::migrate::run(&client, &ecosystem, &target, &config).await?,
-    Command::Launch(args) => commands::launch::run(
-      &ecosystem,
-      &target,
-      &config.launch,
-      args.vanilla,
-      args.print_steam_options,
-      &args.args,
-    )?,
     Command::Export(args) => match args.code {
       true => commands::portability::export_code(&client, &target).await?,
       false => commands::portability::export_file(&target)?,
@@ -296,7 +222,7 @@ async fn run() -> AppResult<()> {
     Command::Sync => {
       commands::sync::run(&config.gale_sync, &ecosystem, &target, &mod_sources).await?
     }
-    Command::Search(_) | Command::Profile(_) => {
+    Command::Search(_) => {
       unreachable!("dispatched before target resolution")
     }
   }
@@ -327,46 +253,6 @@ mod tests {
   }
 
   #[test]
-  fn the_migration_refusal_offers_the_game_root_it_can_infer() {
-    let message = needs_migration_error(Some("/games/Valheim/BepInEx/plugins")).to_string();
-
-    // An old `install_dir` pointed at the plugins folder, and the game root is
-    // two levels above it. Handing back the exact line to paste is the whole
-    // reason this branch exists, so the inferred path has to appear as a
-    // `game_dir` assignment rather than merely being mentioned.
-    assert!(
-      message.contains("game_dir = \"/games/Valheim\""),
-      "the refusal must offer the inferred game root; got: {message}"
-    );
-    assert!(
-      message.contains("install_dir"),
-      "the refusal must name the setting being retired; got: {message}"
-    );
-    assert!(message.contains("Nothing was changed"), "got: {message}");
-  }
-
-  #[test]
-  fn the_migration_refusal_falls_back_to_the_example_when_it_cannot_infer() {
-    // Nothing about this path says where a game root would be, so
-    // `suggest_game_dir` declines and the generic example has to carry the
-    // message instead of a wrong guess.
-    let message = needs_migration_error(Some("/somewhere/else")).to_string();
-
-    assert!(
-      message.contains(config::example_game_dir()),
-      "the fallback must show the platform example; got: {message}"
-    );
-    assert!(
-      !message.contains("is probably"),
-      "an inference that was not made must not be claimed; got: {message}"
-    );
-
-    // A config that reports NeedsMigration always has an `install_dir`, but the
-    // wording must not depend on being able to read it.
-    assert!(needs_migration_error(None).to_string().contains("game_dir"));
-  }
-
-  #[test]
   fn the_unset_refusal_names_the_setting_and_shows_an_example() {
     let message = unset_game_dir_error().to_string();
 
@@ -374,12 +260,6 @@ mod tests {
     assert!(
       message.contains(config::example_game_dir()),
       "the refusal must show a usable example; got: {message}"
-    );
-    // A fresh config has no `install_dir` to retire, so mentioning it here would
-    // send a first-time user looking for a key they do not have.
-    assert!(
-      !message.contains("install_dir"),
-      "a fresh config must not be told about a deprecated key; got: {message}"
     );
     assert!(message.contains("Nothing was changed"), "got: {message}");
   }

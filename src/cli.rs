@@ -12,12 +12,6 @@ pub struct AppCli {
   /// Path to a config file, overriding the default XDG location.
   #[arg(long, global = true)]
   pub config: Option<PathBuf>,
-  /// Operate on this named profile instead of the game directory.
-  #[arg(long, global = true, conflicts_with = "no_profile")]
-  pub profile: Option<String>,
-  /// Ignore any persisted profile selection and operate on the game directory.
-  #[arg(long, global = true)]
-  pub no_profile: bool,
   /// The subcommand to execute.
   #[command(subcommand)]
   pub command: Command,
@@ -41,12 +35,6 @@ pub enum Command {
   /// Disable an installed mod without uninstalling it, or every installed mod
   /// with `--all`.
   Disable(ToggleArgs),
-  /// Adopt the deprecated `mod_list` config key as this target's mods.yml.
-  Migrate,
-  /// Manage named r2modman-compatible profiles.
-  Profile(ProfileArgs),
-  /// Launch the game with this target's mods applied.
-  Launch(LaunchArgs),
   /// Export this target's mods and config for sharing.
   Export(ExportArgs),
   /// Reconcile mods against the configured gale-sync profile.
@@ -150,66 +138,6 @@ pub enum UpdatesCommand {
   Manifest,
   /// Update installed mods to their latest versions.
   Mods,
-}
-
-/// Arguments for the profile command.
-#[derive(Args)]
-pub struct ProfileArgs {
-  /// The profile operation to perform.
-  #[command(subcommand)]
-  pub command: ProfileCommand,
-}
-
-/// Operations on named r2modman-compatible profiles.
-#[derive(Subcommand)]
-pub enum ProfileCommand {
-  /// List profiles, marking the selected one.
-  List,
-  /// Create a new, empty profile.
-  Create {
-    /// The profile name.
-    name: String,
-  },
-  /// Delete a profile and everything in it.
-  Delete {
-    /// The profile name.
-    name: String,
-  },
-  /// Rename a profile.
-  Rename {
-    /// The existing profile name.
-    from: String,
-    /// The new profile name.
-    to: String,
-  },
-  /// Copy a profile under a new name.
-  Duplicate {
-    /// The profile to copy.
-    from: String,
-    /// The name of the copy.
-    to: String,
-  },
-  /// Select a profile for subsequent commands.
-  Use {
-    /// The profile name.
-    name: String,
-  },
-  /// Clear the selection, returning to the game directory.
-  Clear,
-}
-
-/// Arguments for the launch command.
-#[derive(Args)]
-pub struct LaunchArgs {
-  /// Launch without mods.
-  #[arg(long)]
-  pub vanilla: bool,
-  /// Print the string to paste into Steam's launch options, without launching.
-  #[arg(long)]
-  pub print_steam_options: bool,
-  /// Extra arguments passed to the game, after `--`.
-  #[arg(last = true)]
-  pub args: Vec<String>,
 }
 
 /// Arguments for the export command.
@@ -317,37 +245,6 @@ mod tests {
         .to_string()
         .contains("Update installed mods to their latest versions")
     );
-  }
-
-  #[test]
-  fn profile_flags_are_global_and_mutually_exclusive() {
-    let app = AppCli::command();
-
-    let profile = app
-      .get_arguments()
-      .find(|a| a.get_id().as_str() == "profile")
-      .expect("--profile should be a global argument");
-
-    assert!(profile.is_global_set());
-
-    let no_profile = app
-      .get_arguments()
-      .find(|a| a.get_id().as_str() == "no_profile")
-      .expect("--no-profile should be a global argument");
-
-    assert!(no_profile.is_global_set());
-
-    // Both at once is rejected rather than one silently winning.
-    let conflict = AppCli::try_parse_from([
-      "vmm",
-      "--profile",
-      "experiment",
-      "--no-profile",
-      "search",
-      "jotunn",
-    ]);
-
-    assert!(conflict.is_err());
   }
 
   #[test]

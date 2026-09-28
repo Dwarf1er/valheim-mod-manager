@@ -1,9 +1,6 @@
 pub mod install;
-pub mod launch;
 pub mod list;
-pub mod migrate;
 pub mod portability;
-pub mod profile;
 pub mod search;
 pub mod sync;
 pub mod toggle;

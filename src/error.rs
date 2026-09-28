@@ -74,14 +74,14 @@ mod tests {
   #[test]
   fn advice_renders_headline_detail_and_indented_commands() {
     let message = advice_message(
-      "there's nothing to migrate.",
-      "Your config has no `mod_list` key.",
+      "there's nothing to install.",
+      "No mods were named.",
       &["vmm install <Owner-ModName>"],
     );
 
     assert_eq!(
       message,
-      "there's nothing to migrate.\n\nYour config has no `mod_list` key.\n\n    vmm install <Owner-ModName>"
+      "there's nothing to install.\n\nNo mods were named.\n\n    vmm install <Owner-ModName>"
     );
   }
 
@@ -104,8 +104,8 @@ mod tests {
   #[test]
   fn advice_indents_every_command_under_one_blank_line() {
     assert_eq!(
-      advice_message("headline.", "detail.", &["vmm list", "vmm migrate"]),
-      "headline.\n\ndetail.\n\n    vmm list\n    vmm migrate"
+      advice_message("headline.", "detail.", &["vmm list", "vmm update mods"]),
+      "headline.\n\ndetail.\n\n    vmm list\n    vmm update mods"
     );
   }
 

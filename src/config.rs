@@ -6,27 +6,6 @@ use std::{fs::OpenOptions, path::Path};
 use crate::error::{AppError, AppResult};
 use crate::sources::SourceId;
 
-/// How the game is launched, mapped onto the engine's `LaunchContext`.
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct LaunchConfig {
-  /// The store the game was installed from: `steam`, `steam-direct`, or `other`.
-  pub store: String,
-  /// Whether the game runs natively or under Proton: `native` or `proton`.
-  pub runtime: String,
-  /// Extra arguments appended after the loader's own.
-  pub extra_args: Vec<String>,
-}
-
-impl Default for LaunchConfig {
-  fn default() -> Self {
-    Self {
-      store: "steam".into(),
-      runtime: "native".into(),
-      extra_args: Vec::new(),
-    }
-  }
-}
-
 /// Which mod sources vmm resolves and installs from.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SourcesConfig {
@@ -83,34 +62,16 @@ impl Default for GaleSyncConfig {
 /// including which mods to manage, logging preferences, and file system paths.
 #[derive(Serialize, Deserialize)]
 pub struct AppConfig {
-  /// Deprecated. Superseded by `mods.yml`, which is now the authoritative record
-  /// of what is installed. Retained so existing config files continue to parse
-  /// and so `vmm migrate` can adopt the list; delete the key after migrating.
-  ///
-  /// Skipped when empty so a config written from scratch does not offer a key
-  /// the README tells the reader to delete. An existing list still round-trips,
-  /// which is what keeps `vmm migrate` able to see it.
-  #[serde(default, skip_serializing_if = "Vec::is_empty")]
-  pub mod_list: Vec<String>,
   /// Logging level (e.g., "error", "warn", "info", "debug", "trace").
   pub log_level: String,
   /// The game root: the directory containing `BepInEx/` and the loader proxy
   /// (`winhttp.dll`). Mods are installed here using the loader's install rules.
   #[serde(default)]
   pub game_dir: Option<String>,
-  /// Deprecated. Previously a per-mod copy target; its meaning changed when the
-  /// schema-driven installer was adopted, so it is no longer used. Set
-  /// [`AppConfig::game_dir`] instead. Retained only so existing config files
-  /// continue to parse.
-  #[serde(default)]
-  pub install_dir: Option<String>,
   /// The base directory holding the package cache, exports, profiles, and the
   /// client's download cache. Defaults to the XDG config home for vmm.
   #[serde(default)]
   pub data_dir: Option<String>,
-  /// Launch settings.
-  #[serde(default)]
-  pub launch: LaunchConfig,
   /// Which mod sources to resolve and install from. Defaults to Thunderstore
   /// alone; Hexium is opt-in.
   #[serde(default)]
@@ -124,12 +85,9 @@ pub struct AppConfig {
 impl Default for AppConfig {
   fn default() -> Self {
     Self {
-      mod_list: vec![],
       log_level: "error".into(),
       game_dir: None,
-      install_dir: None,
       data_dir: None,
-      launch: LaunchConfig::default(),
       sources: SourcesConfig::default(),
       gale_sync: GaleSyncConfig::default(),
     }
@@ -141,21 +99,15 @@ impl Default for AppConfig {
 pub enum GameDirStatus<'a> {
   /// `game_dir` is configured; mods install here.
   Set(&'a str),
-  /// `game_dir` is absent but the deprecated `install_dir` is present, an
-  /// upgrade from an older version whose config needs migrating.
-  NeedsMigration,
-  /// Neither `game_dir` nor `install_dir` is configured.
+  /// `game_dir` is not configured.
   Unset,
 }
 
 impl AppConfig {
-  /// Resolves the game root to install into, distinguishing a missing config
-  /// from an old-version config that needs migrating.
+  /// Resolves the game root to install into.
   pub fn game_dir_status(&self) -> GameDirStatus<'_> {
     if let Some(dir) = self.game_dir.as_deref() {
       GameDirStatus::Set(dir)
-    } else if self.install_dir.is_some() {
-      GameDirStatus::NeedsMigration
     } else {
       GameDirStatus::Unset
     }
@@ -194,63 +146,10 @@ pub fn expand_path(path: &str) -> std::path::PathBuf {
   }
 }
 
-/// The example `game_dir` value offered on Unix.
-pub const EXAMPLE_GAME_DIR_UNIX: &str = "$HOME/.steam/steam/steamapps/common/Valheim";
-
-/// The example `game_dir` value offered on Windows.
-///
-/// Drive-rooted rather than variable-prefixed: [`expand_path`] resolves `$VAR`
-/// and `~`, and Windows sets neither `HOME` nor anything else `shellexpand`
-/// reads, so an example in the Unix shape would be left exactly as written and
-/// taken as a *relative* path. Forward slashes because the value is pasted into
-/// a TOML string, where a backslash would have to be escaped, and Windows
-/// accepts them regardless. This is the default Steam location; a user who
-/// installed elsewhere substitutes their own, exactly as on Unix.
-pub const EXAMPLE_GAME_DIR_WINDOWS: &str = "C:/Program Files (x86)/Steam/steamapps/common/Valheim";
-
-/// The example `game_dir` value to show on this platform.
-///
-/// Resolved from the compile-time target: a build cannot run on a platform it
-/// was not compiled for, so there is nothing to detect at run time.
+/// The example `game_dir` value offered in guidance: the directory the
+/// container setup in the README points vmm at.
 pub fn example_game_dir() -> &'static str {
-  if cfg!(windows) {
-    EXAMPLE_GAME_DIR_WINDOWS
-  } else {
-    EXAMPLE_GAME_DIR_UNIX
-  }
-}
-
-/// Derives a likely `game_dir` value from a legacy `install_dir`.
-///
-/// The common old configuration pointed `install_dir` at `<game>/BepInEx/plugins`
-/// (or `<game>/BepInEx/...`). The new `game_dir` is the game root, so this strips
-/// the path at the `BepInEx` segment. Returns `None` when no `BepInEx` segment is
-/// present (so the caller falls back to generic guidance).
-///
-/// Matched on whole path segments rather than on a substring, and from the right
-/// rather than the left, so a directory that merely *starts* with the same
-/// letters (`/games/bepinex-mods/Valheim/BepInEx/plugins`) neither passes for the
-/// real segment nor shadows the one further along. Backslashes are folded to
-/// forward slashes first so a legacy Windows `install_dir` is handled too, and
-/// the suggestion keeps them: it is pasted into a TOML string, where a backslash
-/// would have to be escaped, and Windows accepts forward slashes regardless.
-pub fn suggest_game_dir(install_dir: &str) -> Option<String> {
-  let normalized = install_dir.replace('\\', "/");
-  let mut segments: Vec<&str> = normalized.split('/').collect();
-  let idx = segments
-    .iter()
-    .rposition(|segment| segment.eq_ignore_ascii_case("bepinex"))?;
-
-  segments.truncate(idx);
-
-  let joined = segments.join("/");
-  let candidate = joined.trim_end_matches('/');
-
-  if candidate.is_empty() {
-    None
-  } else {
-    Some(candidate.to_string())
-  }
+  "/config/vmm_game"
 }
 
 /// The per-user config directory for vmm.
@@ -330,17 +229,9 @@ fn get_config_from(
   let default_config_data = AppConfig::default();
 
   let mut builder = Config::builder()
-    .set_default("mod_list", default_config_data.mod_list.clone())?
     .set_default("log_level", default_config_data.log_level.clone())?
     .set_default("game_dir", default_config_data.game_dir.clone())?
-    .set_default("install_dir", default_config_data.install_dir.clone())?
     .set_default("data_dir", default_config_data.data_dir.clone())?
-    .set_default("launch.store", default_config_data.launch.store.clone())?
-    .set_default("launch.runtime", default_config_data.launch.runtime.clone())?
-    .set_default(
-      "launch.extra_args",
-      default_config_data.launch.extra_args.clone(),
-    )?
     .set_default(
       "sources.enabled",
       default_config_data
@@ -426,7 +317,6 @@ mod tests {
   fn test_default_config() {
     let default_config = AppConfig::default();
 
-    assert!(default_config.mod_list.is_empty());
     assert_eq!(default_config.log_level, "error");
   }
 
@@ -443,27 +333,16 @@ mod tests {
 
     let content = fs::read_to_string(&config_path).unwrap();
 
-    // `mod_list` is deprecated and exists only to be migrated away from, so a
-    // config written from scratch must not advertise it. `test_custom_config_values`
-    // covers the other side: a list that is actually set is still written.
-    assert!(
-      !content.contains("mod_list"),
-      "a new config must not offer a deprecated key; got:\n{content}"
-    );
     assert!(content.contains("log_level"));
     assert!(content.contains("error"));
 
     let parsed: AppConfig = toml::from_str(&content).unwrap();
     assert_eq!(parsed.log_level, default_config.log_level);
-    // Absent parses back to empty rather than failing, so an omitted key and an
-    // empty list are the same config.
-    assert!(parsed.mod_list.is_empty());
   }
 
   #[test]
   fn test_custom_config_values() {
     let custom_config = AppConfig {
-      mod_list: vec!["Owner1-ModA".to_string(), "Owner2-ModB".to_string()],
       log_level: "debug".to_string(),
       game_dir: Some("/path/to/game".to_string()),
       ..Default::default()
@@ -477,15 +356,12 @@ mod tests {
 
     let content = fs::read_to_string(&config_path).unwrap();
 
-    assert!(content.contains("Owner1-ModA"));
-    assert!(content.contains("Owner2-ModB"));
+    assert!(content.contains("/path/to/game"));
     assert!(content.contains("debug"));
 
     let parsed: AppConfig = toml::from_str(&content).unwrap();
     assert_eq!(parsed.log_level, "debug");
-    assert_eq!(parsed.mod_list.len(), 2);
-    assert_eq!(parsed.mod_list[0], "Owner1-ModA");
-    assert_eq!(parsed.mod_list[1], "Owner2-ModB");
+    assert_eq!(parsed.game_dir.as_deref(), Some("/path/to/game"));
   }
 
   #[test]
@@ -494,7 +370,6 @@ mod tests {
     let config_path = dir.path().join("override_config.toml");
 
     let custom_config = AppConfig {
-      mod_list: vec!["Owner1-ModA".to_string()],
       log_level: "debug".to_string(),
       ..Default::default()
     };
@@ -503,7 +378,6 @@ mod tests {
 
     let loaded = get_config(Some(&config_path)).unwrap();
     assert_eq!(loaded.log_level, "debug");
-    assert_eq!(loaded.mod_list, vec!["Owner1-ModA"]);
   }
 
   #[test]
@@ -592,32 +466,8 @@ mod tests {
       GameDirStatus::Set("/games/valheim")
     );
 
-    // Only the deprecated install_dir set => an upgrade that needs migrating.
-    let legacy = AppConfig {
-      install_dir: Some("/old/plugins".to_string()),
-      ..Default::default()
-    };
-    assert_eq!(legacy.game_dir_status(), GameDirStatus::NeedsMigration);
-
-    // game_dir takes precedence over a leftover install_dir.
-    let both = AppConfig {
-      game_dir: Some("/games/valheim".to_string()),
-      install_dir: Some("/old/plugins".to_string()),
-      ..Default::default()
-    };
-    assert_eq!(both.game_dir_status(), GameDirStatus::Set("/games/valheim"));
-
-    // Fresh config with neither set.
+    // Fresh config with no game_dir.
     assert_eq!(AppConfig::default().game_dir_status(), GameDirStatus::Unset);
-  }
-
-  #[test]
-  fn launch_config_defaults_to_native_steam() {
-    let launch = LaunchConfig::default();
-
-    assert_eq!(launch.store, "steam");
-    assert_eq!(launch.runtime, "native");
-    assert!(launch.extra_args.is_empty());
   }
 
   #[test]
@@ -646,42 +496,6 @@ mod tests {
     // separates "the fallback is the config home" from "the fallback panics".
     assert_eq!(fallback, std::path::PathBuf::from(&*APP_CACHE_DIR));
     assert_eq!(fallback, config_home().unwrap());
-  }
-
-  #[test]
-  fn launch_settings_load_from_a_config_file() {
-    let dir = tempdir().unwrap();
-    let config_path = dir.path().join("launch_config.toml");
-
-    fs::write(
-      &config_path,
-      "log_level = \"info\"\n\
-       [launch]\n\
-       store = \"other\"\n\
-       runtime = \"proton\"\n\
-       extra_args = [\"-nolog\"]\n",
-    )
-    .unwrap();
-
-    let loaded = get_config(Some(&config_path)).unwrap();
-
-    assert_eq!(loaded.launch.store, "other");
-    assert_eq!(loaded.launch.runtime, "proton");
-    assert_eq!(loaded.launch.extra_args, vec!["-nolog".to_string()]);
-  }
-
-  #[test]
-  fn launch_settings_fall_back_to_defaults_when_absent() {
-    let dir = tempdir().unwrap();
-    let config_path = dir.path().join("bare_config.toml");
-
-    fs::write(&config_path, "log_level = \"info\"\n").unwrap();
-
-    let loaded = get_config(Some(&config_path)).unwrap();
-
-    assert_eq!(loaded.launch.store, "steam");
-    assert_eq!(loaded.launch.runtime, "native");
-    assert!(loaded.mod_list.is_empty());
   }
 
   // Split from the environment-variable case below, which is Unix-only: `HOME`
@@ -716,45 +530,9 @@ mod tests {
     );
   }
 
-  // Unix-only, and not merely by subject. `expand_path` reads `$HOME` through
-  // `shellexpand`, which errors when the variable is unset and leaves the string
-  // exactly as written. Windows does not normally set `HOME`, so there the
-  // example stays `$HOME/...` and is a *relative* path, which is the trap the
-  // sibling test below exists to keep out of the Windows example. Asserting
-  // absoluteness off Unix would therefore fail on the platform this example is
-  // not for.
-  #[cfg(unix)]
   #[test]
-  fn the_unix_example_game_dir_expands_to_an_absolute_path() {
-    let expanded = expand_path(EXAMPLE_GAME_DIR_UNIX);
-
-    assert!(
-      expanded.is_absolute(),
-      "an example a user pastes into their config must resolve absolutely; got: {}",
-      expanded.display()
-    );
-  }
-
-  #[test]
-  fn the_windows_example_game_dir_is_drive_rooted_and_needs_no_expansion() {
-    // Windows does not normally set `HOME`, and `shellexpand` understands only
-    // `$VAR` syntax, so a `$HOME`-prefixed example is left there exactly as
-    // written and becomes a *relative* path that every install route is then
-    // silently created beneath. That is the failure `missing_game_dir_error`
-    // exists to report, and offering an example that causes it is a trap.
-    assert!(
-      !EXAMPLE_GAME_DIR_WINDOWS.contains('$'),
-      "a Windows example must not depend on variable expansion; got: {EXAMPLE_GAME_DIR_WINDOWS}"
-    );
-
-    // `Path::is_absolute` cannot judge this from a Unix test host, which does
-    // not recognise drive letters, so the drive prefix is asserted directly.
-    assert!(
-      EXAMPLE_GAME_DIR_WINDOWS
-        .strip_prefix(char::is_alphabetic)
-        .is_some_and(|rest| rest.starts_with(":/")),
-      "a Windows example must be drive-rooted; got: {EXAMPLE_GAME_DIR_WINDOWS}"
-    );
+  fn the_example_game_dir_is_absolute() {
+    assert!(expand_path(example_game_dir()).is_absolute());
   }
 
   #[cfg(unix)]
@@ -820,48 +598,5 @@ mod tests {
     create_missing_config_file(&path, &AppConfig::default()).unwrap();
 
     assert!(path.is_file());
-  }
-
-  #[test]
-  fn test_suggest_game_dir() {
-    assert_eq!(
-      suggest_game_dir("/games/Valheim/BepInEx/plugins").as_deref(),
-      Some("/games/Valheim")
-    );
-    assert_eq!(
-      suggest_game_dir("~/.steam/steam/steamapps/common/Valheim/BepInEx").as_deref(),
-      Some("~/.steam/steam/steamapps/common/Valheim")
-    );
-    // Case-insensitive match on the BepInEx segment.
-    assert_eq!(
-      suggest_game_dir("/games/Valheim/bepinex/plugins").as_deref(),
-      Some("/games/Valheim")
-    );
-    // No BepInEx segment => no suggestion.
-    assert_eq!(suggest_game_dir("/some/other/path"), None);
-  }
-
-  #[test]
-  fn suggest_game_dir_handles_windows_paths_and_repeated_segments() {
-    // A legacy Windows `install_dir`. The suggestion is normalized to forward
-    // slashes: it is pasted into a TOML string, where a backslash would have to
-    // be escaped, and Windows accepts forward slashes anyway.
-    assert_eq!(
-      suggest_game_dir("C:\\Games\\Valheim\\BepInEx\\plugins").as_deref(),
-      Some("C:/Games/Valheim")
-    );
-
-    // The *last* BepInEx segment is the game's, not an earlier lookalike
-    // directory that merely starts with the same letters.
-    assert_eq!(
-      suggest_game_dir("/games/bepinex-mods/Valheim/BepInEx/plugins").as_deref(),
-      Some("/games/bepinex-mods/Valheim")
-    );
-
-    // `bepinex-mods` is not a BepInEx segment, so it is not a game root either.
-    assert_eq!(suggest_game_dir("/games/bepinex-mods/plugins"), None);
-
-    // Nothing precedes the segment, so there is no game root to suggest.
-    assert_eq!(suggest_game_dir("/BepInEx/plugins"), None);
   }
 }
