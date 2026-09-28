@@ -49,6 +49,8 @@ pub enum Command {
   Launch(LaunchArgs),
   /// Export this target's mods and config for sharing.
   Export(ExportArgs),
+  /// Reconcile mods against the configured gale-sync profile.
+  Sync,
   /// Import mods from an export file, a profile directory, or a profile code.
   Import(ImportArgs),
 }
@@ -225,12 +227,12 @@ pub struct ImportArgs {
   /// directory import copies over the destination without clearing it first, so
   /// mods already there under a different set can be left behind untracked.
   pub source: String,
-  /// Uninstall mods this target has that the import's source no longer names.
-  /// Refused up front when `source` is a directory: a directory import is
-  /// already a raw, non-reconciling copy, and prune has nothing well-defined
-  /// to do there.
+  /// Only add: leave mods this target has that the import's source no longer
+  /// names installed. By default a file or code import is authoritative and
+  /// uninstalls them. Directory imports never reconcile, so this has no effect
+  /// on them.
   #[arg(long)]
-  pub prune: bool,
+  pub additive: bool,
 }
 
 #[cfg(test)]

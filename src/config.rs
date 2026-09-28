@@ -51,6 +51,32 @@ impl Default for SourcesConfig {
   }
 }
 
+/// The gale-sync profile whose modlist is treated as the desired one.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct GaleSyncConfig {
+  /// The synced profile's id. `None` disables gale-sync. Reading a profile is
+  /// unauthenticated, so no token is stored.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub profile_id: Option<String>,
+  /// The gale-sync API root.
+  #[serde(default = "default_gale_sync_url")]
+  pub base_url: String,
+}
+
+/// The public gale-sync API root.
+fn default_gale_sync_url() -> String {
+  "https://gale.kesomannen.com/api".into()
+}
+
+impl Default for GaleSyncConfig {
+  fn default() -> Self {
+    Self {
+      profile_id: None,
+      base_url: default_gale_sync_url(),
+    }
+  }
+}
+
 /// Application configuration loaded from vmm_config.toml.
 ///
 /// This structure defines all user-configurable settings for the Valheim Mod Manager,
@@ -89,6 +115,10 @@ pub struct AppConfig {
   /// alone; Hexium is opt-in.
   #[serde(default)]
   pub sources: SourcesConfig,
+  /// The gale-sync profile polled for the desired modlist. Disabled unless
+  /// `profile_id` is set.
+  #[serde(default)]
+  pub gale_sync: GaleSyncConfig,
 }
 
 impl Default for AppConfig {
@@ -101,6 +131,7 @@ impl Default for AppConfig {
       data_dir: None,
       launch: LaunchConfig::default(),
       sources: SourcesConfig::default(),
+      gale_sync: GaleSyncConfig::default(),
     }
   }
 }
@@ -379,6 +410,17 @@ mod tests {
   use std::fs;
   use std::path::PathBuf;
   use tempfile::tempdir;
+
+  #[test]
+  fn gale_sync_is_disabled_by_default_and_reads_a_profile_id() {
+    assert!(AppConfig::default().gale_sync.profile_id.is_none());
+
+    let parsed: AppConfig =
+      toml::from_str("log_level = \"error\"\n[gale_sync]\nprofile_id = \"abc\"\n").unwrap();
+
+    assert_eq!(parsed.gale_sync.profile_id.as_deref(), Some("abc"));
+    assert_eq!(parsed.gale_sync.base_url, "https://gale.kesomannen.com/api");
+  }
 
   #[test]
   fn test_default_config() {

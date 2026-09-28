@@ -52,7 +52,17 @@ list_json() {
 
 "$VMM_BIN" --config "$VMM_CONFIG" update manifest
 
+# Snapshot before the gale-sync reconcile so the diff below covers modlist
+# changes as well as version updates.
 before=$(list_json)
+
+# Reconciles against the configured [gale_sync] profile (installs what it
+# names, uninstalls what it no longer does). A failure - unreachable
+# gale-sync, or none configured - must not stop the server: fall through and
+# keep running with whatever is already installed.
+if ! "$VMM_BIN" --config "$VMM_CONFIG" sync; then
+  echo "vmm-update-and-restart: vmm sync failed or is not configured; keeping installed mods" >&2
+fi
 
 "$VMM_BIN" --config "$VMM_CONFIG" update mods
 

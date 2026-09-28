@@ -74,11 +74,11 @@ pub async fn export_code(client: &ThunderstoreClient, target: &Target) -> AppRes
 /// engine's r2modman-dir route, which would silently adopt nothing: see
 /// [`import_gale_dir`].
 ///
-/// `--prune` (`prune: true`) additionally uninstalls anything this target has
-/// that the import's source no longer names, reconciling a shrinking export
-/// instead of only ever adding to it. It is refused up front for a directory
-/// source (see [`directory_prune_error`]), since a directory import is
-/// already documented as a raw, non-reconciling copy.
+/// `prune: true` (the CLI default; `--additive` turns it off) additionally
+/// uninstalls anything this target has that the import's source no longer
+/// names, so the target converges on the source instead of only ever growing.
+/// It does not apply to a directory source, which is a raw, non-reconciling
+/// copy and ignores it.
 pub async fn import(
   client: &ThunderstoreClient,
   eco: &Ecosystem,
@@ -90,10 +90,6 @@ pub async fn import(
   let classified = ImportSource::classify(source);
 
   if let ImportSource::R2modmanDir(dir) = &classified {
-    if prune {
-      return Err(directory_prune_error());
-    }
-
     if !dir.join("mods.yml").exists() {
       return import_gale_dir(eco, target, dir, sources).await;
     }
@@ -222,18 +218,6 @@ async fn import_zip_with_sources(
   .await?;
 
   Ok((installed, source_map))
-}
-
-/// The refusal [`import`] returns when `--prune` is combined with a directory
-/// source.
-fn directory_prune_error() -> AppError {
-  AppError::advice(
-    "`--prune` cannot be used with a directory source.",
-    "A directory import is already a raw, non-reconciling copy of whatever is \
-     on disk, and prune has nothing well-defined to do there. Nothing was \
-     changed.",
-    &[],
-  )
 }
 
 /// Copies an r2modman profile directory (one that already carries a `mods.yml`)
@@ -425,13 +409,8 @@ fn untracked_names(untracked: &[PathBuf]) -> Vec<String> {
 }
 
 /// Imports an archive or profile-code `classified` source (never a directory —
-/// that route is refused before this is ever called), then uninstalls whatever
+/// that route is handled before this is ever called), then uninstalls whatever
 /// this target has that the source no longer names.
-///
-/// The source's export is decoded once into `zip_bytes` and its full mod list
-/// (`wanted`) is read from that same decode, so `stale` is computed against
-/// what the source actually names, not merely what happened to install
-/// successfully.
 async fn import_with_prune(
   client: &ThunderstoreClient,
   eco: &Ecosystem,
@@ -439,17 +418,48 @@ async fn import_with_prune(
   classified: &ImportSource,
   sources: &[Box<dyn ModSource>],
 ) -> AppResult<()> {
+  let zip_bytes = decode_archive_or_code(client, sources, classified).await?;
+
+  reconcile_zip(eco, target, sources, &zip_bytes).await
+}
+
+/// Installs `zip_bytes`' modlist, then uninstalls whatever this target has that
+/// it no longer names: the shared core of `import` (pruning) and `sync`.
+///
+/// The export is decoded once and its full mod list (`wanted`) is read from
+/// that same decode, so `stale` is computed against what the source actually
+/// names, not merely what happened to install successfully.
+pub async fn reconcile_zip(
+  eco: &Ecosystem,
+  target: &Target,
+  sources: &[Box<dyn ModSource>],
+  zip_bytes: &[u8],
+) -> AppResult<()> {
   let previous: HashSet<String> = modlist::read(&target.dir)
     .unwrap_or_default()
     .into_iter()
     .map(|entry| entry.name)
     .collect();
 
-  let zip_bytes = decode_archive_or_code(client, sources, classified).await?;
-  let export = portability::read_export(&zip_bytes)?;
+  let export = portability::read_export(zip_bytes)?;
   let wanted: HashSet<String> = export.mods.into_iter().map(|entry| entry.name).collect();
 
-  let (installed, source_map) = import_zip_with_sources(target, eco, sources, &zip_bytes).await?;
+  // Checked before anything is installed or removed: an empty source (a
+  // profile someone blanked out or a truncated export) would otherwise
+  // uninstall everything, including the mod loader.
+  if wanted.is_empty() && !previous.is_empty() {
+    return Err(AppError::advice(
+      "refusing to prune: the source names no mods.",
+      format!(
+        "Reconciling against an empty modlist would uninstall all {} installed \
+         mod(s). Nothing was changed.",
+        previous.len()
+      ),
+      &["vmm import --additive <source>"],
+    ));
+  }
+
+  let (installed, source_map) = import_zip_with_sources(target, eco, sources, zip_bytes).await?;
 
   super::report_installed(target, &installed)?;
   record_resolved_sources(target, &installed, &source_map)?;
@@ -1155,15 +1165,15 @@ mod tests {
   }
 
   #[test]
-  fn prune_is_refused_up_front_for_a_directory_source() {
+  fn prune_is_ignored_for_a_directory_source() {
     let fixture = Fixture::new();
-    let destination = fixture.profile_target("no-prune-for-dirs");
+    let destination = fixture.profile_target("prune-ignored-for-dirs");
     let eco = Ecosystem::bundled();
     let source = tempfile::TempDir::new().unwrap();
 
     std::fs::write(source.path().join("mods.yml"), "[]").unwrap();
 
-    let message = Runtime::new()
+    Runtime::new()
       .unwrap()
       .block_on(import(
         &fixture.client,
@@ -1173,11 +1183,43 @@ mod tests {
         true,
         &[],
       ))
+      .unwrap();
+  }
+
+  #[test]
+  fn reconciling_against_an_empty_modlist_is_refused_and_changes_nothing() {
+    let fixture = Fixture::new();
+    let target = fixture.target();
+    let eco = Ecosystem::bundled();
+    let runtime = Runtime::new().unwrap();
+
+    runtime
+      .block_on(crate::commands::install::run(
+        &fixture.client,
+        &eco,
+        &target,
+        &["Owner-ModA".to_string()],
+      ))
+      .unwrap();
+
+    let mut buf = std::io::Cursor::new(Vec::new());
+    {
+      use std::io::Write;
+      let mut zip = zip::ZipWriter::new(&mut buf);
+      zip
+        .start_file("export.r2x", zip::write::SimpleFileOptions::default())
+        .unwrap();
+      zip.write_all(b"profileName: Empty\nmods: []\n").unwrap();
+      zip.finish().unwrap();
+    }
+
+    let message = runtime
+      .block_on(reconcile_zip(&eco, &target, &[], buf.get_ref()))
       .unwrap_err()
       .to_string();
 
-    assert!(message.contains("--prune"), "got: {message}");
-    assert!(message.contains("directory"), "got: {message}");
+    assert!(message.contains("refusing to prune"), "got: {message}");
+    assert!(target.dir.join("BepInEx/plugins/Owner-ModA").exists());
   }
 
   #[test]
@@ -1316,7 +1358,7 @@ mod tests {
       ))
       .unwrap();
 
-    // The default (no `--prune`) add-only behavior must not silently change:
+    // The default (`--additive`) add-only behavior must not silently change:
     // pinning this down means a future change can't flip it by accident.
     runtime
       .block_on(import(

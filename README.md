@@ -15,8 +15,8 @@ A command-line tool for managing and automatically downloading Valheim mods and 
 - Installs into your game directory by default; named profiles are opt-in
 - Launches the game with a profile's mods applied
 - Exports and imports profiles as `.r2z` files, Thunderstore/Gale profile codes, or
-  live r2modman/Gale profile directories, with an optional `--prune` to
-  reconcile a shrinking export
+  live r2modman/Gale profile directories, where file/code imports reconcile by default (`--additive` to opt out),
+  plus `vmm sync` against a gale-sync profile
 - Shares one download and extraction cache across every target
 - Shows live progress while it works: a spinner for the package index fetch and
   a byte bar per mod download
@@ -68,6 +68,17 @@ The config file supports the following settings:
   invocation. See
   [How Source Resolution Works](#how-source-resolution-works) for exactly how sources are merged, which
   source a shared mod resolves from, and which client downloads it.
+- `[gale_sync] profile_id`: Optional. The id of a
+  [gale-sync](https://github.com/Kesomannen/gale-sync) profile whose modlist is
+  the desired one. Reading a profile needs no token, so none is stored.
+  Unset disables gale-sync. `base_url` overrides the API root
+  (default `https://gale.kesomannen.com/api`).
+  ```toml
+  [gale_sync]
+  profile_id = "GsioqKpVRwiP7_ynX-QsuA"
+  ```
+  Run `vmm sync` to reconcile against it (see
+  [Syncing with gale-sync](#syncing-with-gale-sync)).
 - `mod_list`: **Deprecated.** Superseded by `mods.yml`. Run `vmm migrate` to
   adopt it, then delete the key
 - `install_dir`: **Deprecated.** Superseded by `game_dir`. If only `install_dir`
@@ -252,9 +263,9 @@ vmm import a1b2c3d4-0000-0000-0000-000000000000
 vmm import ~/.config/r2modmanPlus-local/Valheim/profiles/Default
 vmm import ~/.local/share/gale/valheim/profiles/Default
 
-# Also uninstall anything this target has that the re-imported source no
-# longer names (file or code sources only, see below)
-vmm import --prune ./default_1753488000.r2z
+# Only add: keep mods the re-imported source no longer names, instead of
+# uninstalling them (file or code sources only, see below)
+vmm import --additive ./default_1753488000.r2z
 ```
 
 A file or profile-code import installs each mod's **latest** version, not the
@@ -295,24 +306,33 @@ source actually supplied it. A Gale-exported `.r2z` file or shared profile
 code, by contrast, already works today unchanged through the ordinary file/code
 import path above; only a *live* Gale profile directory needs this route.
 
-### Reconciling a shrinking export with `--prune`
+### Reconciling a shrinking export
 
-`vmm import` is add-only by default: re-importing a file or profile code that
-dropped a mod leaves that mod installed. If you maintain a shared profile as
-the source of truth and periodically re-share it, `--prune` also uninstalls
-anything the target has that the freshly re-imported source no longer names,
-so the target actually converges on the source rather than only ever growing:
+A file or profile-code import is authoritative by default: after installing,
+it also uninstalls anything the target has that the source no longer names, so
+re-importing a shared profile makes the target converge on it rather than only
+ever growing. Pass `--additive` to keep the old mods instead (for example to
+try a profile locally without disturbing what is already installed):
 
 ```bash
-vmm import --prune a1b2c3d4-0000-0000-0000-000000000000
+vmm import a1b2c3d4-0000-0000-0000-000000000000
+vmm import --additive a1b2c3d4-0000-0000-0000-000000000000
 ```
 
-`--prune` is refused up front for a directory source (Gale or r2modman alike):
-a directory import is already a raw, non-reconciling copy of whatever is on
-disk, and prune has nothing well-defined to do there. A stale mod that cannot
-be removed exactly (for example, a mod loader adopted from a directory with no
-install record) is reported and left in place rather than failing the whole
-prune; anything else stale is still removed in the same run.
+Directory imports (Gale or r2modman alike) never reconcile: they are a raw
+copy of whatever is on disk, so the default does not apply to them. A stale mod
+that cannot be removed exactly (for example, a mod loader adopted from a
+directory with no install record) is reported and left in place rather than
+failing the whole run; anything else stale is still removed.
+
+### Syncing with gale-sync
+
+With `[gale_sync] profile_id` set, `vmm sync` fetches that profile and
+reconciles the target against it exactly like a pruning import. If gale-sync
+cannot be reached (or no profile is configured) it fails before touching
+anything. `scripts/vmm-update-and-restart.sh` runs it on every cycle and
+tolerates that failure, keeping the installed mods, then restarts the server
+if the mod list changed.
 
 ## Global Options
 

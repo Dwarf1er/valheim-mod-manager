@@ -4,6 +4,8 @@ pub mod cli;
 pub mod config;
 /// Error types and result aliases for the application.
 pub mod error;
+/// The gale-sync profile API, a pollable source of the desired modlist.
+pub mod gale_sync;
 /// Logging configuration and setup.
 pub mod logs;
 /// Progress reporting backed by `indicatif` for the CLI.

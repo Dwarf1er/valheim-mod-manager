@@ -2,6 +2,7 @@ mod cli;
 mod commands;
 mod config;
 mod error;
+mod gale_sync;
 mod logs;
 mod progress;
 mod sources;
@@ -287,10 +288,13 @@ async fn run() -> AppResult<()> {
         &ecosystem,
         &target,
         &args.source,
-        args.prune,
+        !args.additive,
         &mod_sources,
       )
       .await?
+    }
+    Command::Sync => {
+      commands::sync::run(&config.gale_sync, &ecosystem, &target, &mod_sources).await?
     }
     Command::Search(_) | Command::Profile(_) => {
       unreachable!("dispatched before target resolution")
