@@ -1,0 +1,264 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   viewBox="0 0 256 256"
+   width="256"
+   height="256"
+   role="img"
+   aria-labelledby="title desc"
+   version="1.1"
+   id="svg26"
+   sodipodi:docname="logo.svg"
+   inkscape:version="1.4.4 (dcaf3e7d9e, 2026-05-05)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+     id="namedview26"
+     pagecolor="#505050"
+     bordercolor="#eeeeee"
+     borderopacity="1"
+     inkscape:showpageshadow="0"
+     inkscape:pageopacity="0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#505050"
+     inkscape:zoom="2.375"
+     inkscape:cx="93.052632"
+     inkscape:cy="78.526316"
+     inkscape:window-width="1906"
+     inkscape:window-height="1014"
+     inkscape:window-x="0"
+     inkscape:window-y="0"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg26"
+     showgrid="false" />
+  <title
+     id="title">vsmm</title>
+  <desc
+     id="desc">A rune-carved V encircled by two sync arrows, representing a Valheim server kept in sync with a mod profile.</desc>
+  <defs
+     id="defs8">
+    <linearGradient
+       id="bg"
+       x1="0"
+       y1="0"
+       x2="0"
+       y2="1">
+      <stop
+         offset="0"
+         stop-color="#241a17"
+         id="stop1" />
+      <stop
+         offset="1"
+         stop-color="#0e0908"
+         id="stop2" />
+    </linearGradient>
+    <linearGradient
+       id="metal"
+       gradientUnits="userSpaceOnUse"
+       x1="0"
+       y1="740"
+       x2="0"
+       y2="-6">
+      <stop
+         offset="0"
+         stop-color="#b9aaa0"
+         id="stop3" />
+      <stop
+         offset="0.35"
+         stop-color="#8a6f62"
+         id="stop4" />
+      <stop
+         offset="0.65"
+         stop-color="#e2611f"
+         id="stop5" />
+      <stop
+         offset="1"
+         stop-color="#a11d0b"
+         id="stop6" />
+    </linearGradient>
+    <linearGradient
+       id="ember"
+       x1="0"
+       y1="0"
+       x2="0"
+       y2="1">
+      <stop
+         offset="0"
+         stop-color="#f08a34"
+         id="stop7" />
+      <stop
+         offset="1"
+         stop-color="#b3260c"
+         id="stop8" />
+    </linearGradient>
+    <filter
+       id="glow"
+       x="-0.21538462"
+       y="-0.11260054"
+       width="1.4307692"
+       height="1.2252011">
+      <feGaussianBlur
+         stdDeviation="35"
+         id="feGaussianBlur8" />
+    </filter>
+  </defs>
+  <!-- badge -->
+  <rect
+     x="8"
+     y="8"
+     width="240"
+     height="240"
+     rx="52"
+     fill="url(#bg)"
+     id="rect8" />
+  <rect
+     x="8"
+     y="8"
+     width="240"
+     height="240"
+     rx="52"
+     fill="none"
+     stroke="#4a2a20"
+     stroke-width="3"
+     id="rect9" />
+  <defs
+     id="defs9">
+    <path
+       id="dash"
+       d="M79 405 55 410 41 411 24 409 16 352 19 319 33 315 60 317 82 318 164 322 222 316 239 327 240 402 227 415 198 412 128 402Z" />
+    <path
+       id="head"
+       d="M287 296 309 310 331 324 361 337 360 387 358 405 308 436H309L289 453H269L233 478L133 535H134L123 545L92 568L60 570L39 535L19 488L71 471C77 470 82 469 87 467L163 425L191 414L190 415L257 368L196 326L197 327L174 319L127 290V291L91 277L30 253L37 199L74 167L115 186C126 197 136 205 145 210L188 238L214 258L218 276L242 271Z" />
+  </defs>
+  <g
+     id="g1"
+     transform="rotate(12.416321,192.47857,121.19916)"
+     style="display:inline">
+    <use
+       href="#dash"
+       transform="matrix(0.02756374,-0.09612617,-0.09612617,-0.02756374,84.579481,128.8652)"
+       fill="#da6626"
+       id="use9"
+       style="stroke:#2a120c;stroke-width:30;stroke-linejoin:round;paint-order:stroke" />
+    <use
+       href="#dash"
+       transform="matrix(0.0544639,-0.08386706,-0.08386706,-0.0544639,86.223792,116.13246)"
+       fill="#e2732b"
+       id="use10"
+       style="stroke:#2a120c;stroke-width:30;stroke-linejoin:round;paint-order:stroke" />
+    <use
+       href="#dash"
+       transform="matrix(0.07660444,-0.06427876,-0.06427876,-0.07660444,91.518945,104.43684)"
+       fill="#e97e2f"
+       id="use11"
+       style="stroke:#2a120c;stroke-width:30;stroke-linejoin:round;paint-order:stroke" />
+    <use
+       href="#dash"
+       transform="matrix(0.09205049,-0.03907311,-0.03907311,-0.09205049,100.0022,94.800407)"
+       fill="#ee8632"
+       id="use12"
+       style="stroke:#2a120c;stroke-width:30;stroke-linejoin:round;paint-order:stroke" />
+    <use
+       href="#dash"
+       transform="matrix(0.09945219,-0.01045285,-0.01045285,-0.09945219,110.93219,88.065306)"
+       fill="#f08a34"
+       id="use13"
+       style="stroke:#2a120c;stroke-width:30;stroke-linejoin:round;paint-order:stroke" />
+    <use
+       href="#dash"
+       transform="matrix(0.09816272,0.0190809,0.0190809,-0.09816272,123.35375,84.820117)"
+       fill="#ef8934"
+       id="use14"
+       style="stroke:#2a120c;stroke-width:30;stroke-linejoin:round;paint-order:stroke" />
+    <use
+       href="#dash"
+       transform="matrix(0.08829476,0.04694716,0.04694716,-0.08829476,136.18134,85.348439)"
+       fill="#ec8432"
+       id="use15"
+       style="stroke:#2a120c;stroke-width:30;stroke-linejoin:round;paint-order:stroke" />
+    <use
+       href="#head"
+       transform="matrix(0.08715904,0.06710665,0.06710665,-0.08715904,137.21752,87.363435)"
+       fill="#e2722b"
+       id="use16"
+       style="stroke:#2a120c;stroke-width:30;stroke-linejoin:round;paint-order:stroke" />
+  </g>
+  <g
+     id="g2"
+     transform="rotate(12.416321,130.59493,127.50467)"
+     style="display:inline">
+    <use
+       href="#dash"
+       transform="matrix(-0.02756374,0.09612617,0.09612617,0.02756374,171.42052,127.1348)"
+       fill="#c94a1a"
+       id="use17"
+       style="stroke:#2a120c;stroke-width:30;stroke-linejoin:round;paint-order:stroke" />
+    <use
+       href="#dash"
+       transform="matrix(-0.0544639,0.08386706,0.08386706,0.0544639,169.77621,139.86754)"
+       fill="#c13d15"
+       id="use18"
+       style="stroke:#2a120c;stroke-width:30;stroke-linejoin:round;paint-order:stroke" />
+    <use
+       href="#dash"
+       transform="matrix(-0.07660444,0.06427876,0.06427876,0.07660444,164.48105,151.56316)"
+       fill="#ba3211"
+       id="use19"
+       style="stroke:#2a120c;stroke-width:30;stroke-linejoin:round;paint-order:stroke" />
+    <use
+       href="#dash"
+       transform="matrix(-0.09205049,0.03907311,0.03907311,0.09205049,155.9978,161.19959)"
+       fill="#b52a0e"
+       id="use20"
+       style="stroke:#2a120c;stroke-width:30;stroke-linejoin:round;paint-order:stroke" />
+    <use
+       href="#dash"
+       transform="matrix(-0.09945219,0.01045285,0.01045285,0.09945219,145.06781,167.93469)"
+       fill="#b3260c"
+       id="use21"
+       style="stroke:#2a120c;stroke-width:30;stroke-linejoin:round;paint-order:stroke" />
+    <use
+       href="#dash"
+       transform="matrix(-0.09816272,-0.0190809,-0.0190809,0.09816272,132.64625,171.17988)"
+       fill="#b4270c"
+       id="use22"
+       style="stroke:#2a120c;stroke-width:30;stroke-linejoin:round;paint-order:stroke" />
+    <use
+       href="#dash"
+       transform="matrix(-0.08829476,-0.04694716,-0.04694716,0.08829476,119.81866,170.65156)"
+       fill="#b72c0e"
+       id="use23"
+       style="stroke:#2a120c;stroke-width:30;stroke-linejoin:round;paint-order:stroke" />
+    <use
+       href="#head"
+       transform="matrix(-0.08715904,-0.06710665,-0.06710665,0.08715904,118.78248,168.63656)"
+       fill="#c13e15"
+       id="use24"
+       style="stroke:#2a120c;stroke-width:30;stroke-linejoin:round;paint-order:stroke" />
+  </g>
+  <defs
+     id="defs25">
+    <path
+       id="v"
+       d="M182 392 159 541 154 549 155 553 139 626 123 740 65 736 20 716 57 589 65 521C69 503 75 481 81 461L93 444L89 410L100 371V374L130 178L142 172L137 148L155 38L172 -6L212 -5L265 -3L284 81L296 151L286 172L300 186L333 338V344C333 346 332 350 332 351C331 353 331 351 331 353L344 378L367 546C368 557 370 565 373 574L382 608C387 629 393 652 398 670L410 725L323 740L306 721L291 617L297 600L298 593L283 583L266 474L256 377L246 347L231 248L232 249L219 141L208 249Z" />
+  </defs>
+  <g
+     transform="translate(128 128) scale(0.15 -0.15) translate(-215 -367)"
+     id="g26">
+    <use
+       href="#v"
+       fill="#e2611f"
+       opacity="0.7"
+       filter="url(#glow)"
+       id="use25" />
+    <use
+       href="#v"
+       fill="url(#metal)"
+       stroke="#2a120c"
+       stroke-width="26"
+       stroke-linejoin="round"
+       paint-order="stroke"
+       id="use26" />
+  </g>
+</svg>

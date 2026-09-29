@@ -1,7 +1,10 @@
 <div align="center">
 
+
 # vsmm
 ##### Keep a Valheim dedicated server's mods in sync with a Gale profile
+
+<img src="assets/logo.svg" alt="vsmm logo" width="160">
 
 ![License](https://img.shields.io/github/license/Dwarf1er/valheim-server-mod-manager?style=for-the-badge)
 ![Issues](https://img.shields.io/github/issues/Dwarf1er/valheim-server-mod-manager?style=for-the-badge)
@@ -45,7 +48,7 @@ Mods come from [Thunderstore](https://thunderstore.io) and [Hexium](https://valh
 
 Already running the [community Valheim server image](https://github.com/community-valheim-tools/valheim-server-docker) with `BEPINEX=true`? Three steps and your server follows a Gale profile.
 
-**1. Add a config file** named `vsmm_config.toml` to the folder you mount at `/config`, using the short code Gale gives you when you sync a profile (for example `LRSZM0`):
+**1. Add a config file** named `vsmm_config.toml` to the folder you mount at `/config`, using the short code Gale gives you when you sync a profile (for example `8GWAV8`):
 
 ```toml
 game_dir = "/config/vsmm_game"
