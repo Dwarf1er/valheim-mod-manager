@@ -23,6 +23,8 @@
 #   BEPINEX_CONFIG_DIR the image's persistent BepInEx directory (default: /config/bepinex)
 #   BEPINEX_LIVE_DIR   the image's live BepInEx install (default: /opt/valheim/bepinex/BepInEx)
 #   IMAGE_COMMON       the image's shared shell functions (default: /usr/local/etc/valheim/common)
+#   VSMM_LIVE_MODLIST  where the mod list last given to the live server is kept
+#                      (default: $VSMM_GAME_DIR/.live_modlist.json)
 set -eu
 
 VSMM_CONFIG="${VSMM_CONFIG:-/config/vsmm_config.toml}"
@@ -31,6 +33,7 @@ VSMM_GAME_DIR="${VSMM_GAME_DIR:-/config/vsmm_game}"
 BEPINEX_CONFIG_DIR="${BEPINEX_CONFIG_DIR:-/config/bepinex}"
 BEPINEX_LIVE_DIR="${BEPINEX_LIVE_DIR:-/opt/valheim/bepinex/BepInEx}"
 IMAGE_COMMON="${IMAGE_COMMON:-/usr/local/etc/valheim/common}"
+LIVE_MODLIST="${VSMM_LIVE_MODLIST:-$VSMM_GAME_DIR/.live_modlist.json}"
 
 if ! command -v "$VSMM_BIN" >/dev/null 2>&1; then
   echo "vsmm-update-and-restart: '$VSMM_BIN' not found on PATH; is POST_BOOTSTRAP_HOOK installing it?" >&2
@@ -46,8 +49,8 @@ ln -sfn "$BEPINEX_CONFIG_DIR" "$VSMM_GAME_DIR/BepInEx/config"
 
 # vsmm's own tracing output is written to stdout alongside command output (see
 # src/logs.rs), and it's timestamped, so a raw capture of `list` would differ
-# between the "before" and "after" snapshots below even when nothing
-# installed actually changed. The JSON payload is the only thing that starts
+# from the recorded mod list below even when nothing installed actually
+# changed. The JSON payload is the only thing that starts
 # a line with `[`, so trimming everything before that reliably isolates it
 # regardless of the configured log_level.
 list_json() {
@@ -56,9 +59,11 @@ list_json() {
 
 "$VSMM_BIN" --config "$VSMM_CONFIG" update manifest
 
-# Snapshot before the gale-sync reconcile so the diff below covers modlist
-# changes as well as version updates.
-before=$(list_json)
+# The mod list the live server was last given (none, if it never was). Comparing
+# against this, rather than against the list from the start of this run, also
+# catches changes made outside the hook - a manual `vsmm sync` or `vsmm
+# install` - which would otherwise never reach the live install.
+synced=$(cat "$LIVE_MODLIST" 2>/dev/null || echo "[]")
 
 # Reconciles against the configured [gale_sync] profile (installs what it
 # names, uninstalls what it no longer does). A failure - unreachable
@@ -72,7 +77,7 @@ fi
 
 after=$(list_json)
 
-if [ "$before" = "$after" ]; then
+if [ "$synced" = "$after" ]; then
   echo "vsmm-update-and-restart: no mod changes, leaving the server running"
   exit 0
 fi
@@ -91,3 +96,6 @@ fi
 
 echo "vsmm-update-and-restart: restarting valheim-server"
 supervisorctl restart valheim-server
+
+# Only recorded once the restart succeeded, so a failed one is retried next run.
+printf '%s\n' "$after" > "$LIVE_MODLIST"

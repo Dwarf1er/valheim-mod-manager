@@ -25,6 +25,7 @@ Mods come from [Thunderstore](https://thunderstore.io) and [Hexium](https://valh
 * [Why this fork](#why-this-fork)
 * [How it works](#how-it-works)
 * [Ways to manage mods](#ways-to-manage-mods)
+  * [Applying changes right away](#applying-changes-right-away)
 * [Setup](#setup)
 * [Configuration](#configuration)
 * [Version pinning](#version-pinning)
@@ -57,6 +58,12 @@ enabled = ["hexium", "thunderstore"]
 profile_id = "YOUR-PROFILE-SYNC-ID"
 ```
 
+The container creates that folder as root, so a normal user can't write to it. Either use `sudo` (for example `sudo nano config/vsmm_config.toml`), or save the file anywhere and copy it in through the container:
+
+```bash
+docker compose exec -T valheim sh -c 'cat > /config/vsmm_config.toml' < vsmm_config.toml
+```
+
 **2. Add these to your compose file**, under the server's `environment:`:
 
 ```yaml
@@ -65,7 +72,7 @@ profile_id = "YOUR-PROFILE-SYNC-ID"
       POST_BOOTSTRAP_HOOK: >-
         curl --proto "=https" --tlsv1.2 -LsSf
         https://github.com/Dwarf1er/valheim-server-mod-manager/releases/latest/download/valheim-server-mod-manager-installer.sh
-        | VALHEIM_SERVER_MOD_MANAGER_INSTALL_DIR=/usr/local/bin sh
+        | VALHEIM_SERVER_MOD_MANAGER_UNMANAGED_INSTALL=/usr/local/bin sh
         && curl --proto "=https" --tlsv1.2 -LsSf
         https://raw.githubusercontent.com/Dwarf1er/valheim-server-mod-manager/master/scripts/vsmm-update-and-restart.sh
         -o /usr/local/bin/vsmm-update-and-restart.sh
@@ -75,16 +82,17 @@ profile_id = "YOUR-PROFILE-SYNC-ID"
 
 Using `docker run` instead? Pass the same three as `-e NAME='value'` flags.
 
-**3. Recreate the container and run the first sync:**
+**3. Recreate the container and run the update script:**
 
 ```bash
 docker compose up -d
-docker compose exec valheim vsmm --config /config/vsmm_config.toml sync
+# wait a few seconds for the container to finish starting, then:
+docker compose exec valheim /usr/local/bin/vsmm-update-and-restart.sh
 ```
 
-Replace `valheim` with your service name. That's it: from here on, every update cycle (every 15 minutes by default) re-checks the profile, installs and removes what changed, and restarts the server only if something did.
+Replace `valheim` with your service name. The script syncs your profile, copies the mods into the live server and restarts it. The image also runs this same script by itself shortly after startup and then on the image's update schedule (every 15 minutes by default, and only while no players are connected), so running it by hand is optional; it just applies everything now instead of waiting. From here on, every cycle re-checks the profile, installs and removes what changed, and restarts the server only if something did.
 
-Mods you placed in `/config/bepinex` by hand are left where they are. `vsmm` only manages what it installed itself. Starting from scratch, want to skip the profile, or curious what the hook does? See [Setup](#setup) and [Ways to manage mods](#ways-to-manage-mods).
+Mods you placed in `/config/bepinex` by hand are left where they are. `vsmm` only manages what it installed itself. Starting from scratch, want to skip the profile, or curious what the script does? See [Setup](#setup), [Ways to manage mods](#ways-to-manage-mods) and [Applying changes right away](#applying-changes-right-away).
 
 ## Why this fork
 
@@ -111,7 +119,7 @@ Mod resolution, installing, and the `mods.yml` record still come from [thunderst
 
 ## How it works
 
-The image already runs an update check on a schedule (`UPDATE_CRON`, every 15 minutes by default) and lets you hook into it. `vsmm` plugs into that hook:
+The image already runs an update check on a schedule and lets you hook into it. By default it checks every 15 minutes (`UPDATE_CRON='*/15 * * * *'`), and only when no players are connected (`UPDATE_IF_IDLE=true`). `vsmm` plugs into that hook:
 
 ```
 Gale profile sync -> vsmm sync -> /config/bepinex -> image sync -> live server
@@ -127,6 +135,8 @@ Every cycle, `scripts/vsmm-update-and-restart.sh` does the following:
 4. If the installed mods changed, copies them into the live install and restarts the game server. Otherwise it does nothing.
 
 If Gale is unreachable, the cycle keeps whatever is installed and carries on. A server never fails to boot because a web service was down.
+
+Because the hook only runs when the image's update check does, mod changes wait for the server to be empty and never kick anyone off; on a busy server, changes wait until a check happens to find it empty. You can change how often it runs by setting `UPDATE_CRON` on the container (for example `'0 6 * * *'` for once a day at 6 AM), or set `UPDATE_IF_IDLE=false` to run even with players connected. Setting `UPDATE_CRON` to an empty string turns the schedule off entirely, and then the hook only runs at startup.
 
 ## Ways to manage mods
 
@@ -144,6 +154,23 @@ Gale profile sync is one of several ways to tell `vsmm` what the server should r
 **Using them alongside profile sync.** If `[gale_sync] profile_id` is set, every scheduled cycle reconciles the server to that profile, so anything added by hand or by another import that the profile doesn't list will be removed on the next cycle. That's intentional: the profile is the source of truth.
 
 If you'd rather manage the server with imports and `install` instead, leave `profile_id` unset. The scheduled cycle then only runs `vsmm update mods`: unpinned mods move to latest, pinned ones (from an import) stay put, and nothing is ever pruned. The script logs that sync isn't configured on each cycle; that's expected.
+
+### Applying changes right away
+
+`vsmm sync`, `import` and `install` change what `vsmm` has installed (in `/config/bepinex`), but the running server only sees it once the update script copies it into the live install and restarts the game server. That happens on the next scheduled cycle. To force it now, run the script:
+
+```bash
+docker exec -i valheim /usr/local/bin/vsmm-update-and-restart.sh
+```
+
+This is the same thing the schedule runs, and it does the whole job in one go: refreshes the package indexes, syncs the profile (if `profile_id` is set), updates unpinned mods, and, if the installed mods differ from what the live server was last given, copies them in and restarts the game server. If nothing differs it does nothing, so it's safe to run any time. It does not wait for an empty server, though: unlike the scheduled run, a manual run restarts the game server right away even if players are connected.
+
+Changes you made by hand count too: the script compares against what the live server last received, not against the start of its own run. So `vsmm import …` or `vsmm install …` followed by the script gets those mods onto the server, and the next scheduled cycle would have done the same.
+
+Two notes:
+
+- If you only want to update what `vsmm` has installed without touching the running server, run `vsmm sync` (or `vsmm update mods`) on its own. The server picks it up at the next cycle.
+- With `profile_id` set, the script reconciles to the profile first, so a mod you just added by hand that the profile doesn't list is removed again by that same run. To keep hand-added mods, leave `profile_id` unset.
 
 ## Setup
 
@@ -184,7 +211,7 @@ services:
       POST_BOOTSTRAP_HOOK: >-
         curl --proto "=https" --tlsv1.2 -LsSf
         https://github.com/Dwarf1er/valheim-server-mod-manager/releases/latest/download/valheim-server-mod-manager-installer.sh
-        | VALHEIM_SERVER_MOD_MANAGER_INSTALL_DIR=/usr/local/bin sh
+        | VALHEIM_SERVER_MOD_MANAGER_UNMANAGED_INSTALL=/usr/local/bin sh
         && curl --proto "=https" --tlsv1.2 -LsSf
         https://raw.githubusercontent.com/Dwarf1er/valheim-server-mod-manager/master/scripts/vsmm-update-and-restart.sh
         -o /usr/local/bin/vsmm-update-and-restart.sh
@@ -194,13 +221,13 @@ services:
 
 `BEPINEX=true` is required. `vsmm` installs mods, but the image is what loads BepInEx.
 
-**3. First run.** `vsmm` only appears on the container's `PATH` after the first boot with the hook. Start the container, then load your mods by hand (or, with `profile_id` set, just wait for the next scheduled cycle):
+**3. First run.** `vsmm` only appears on the container's `PATH` after the first boot with the hook. Start the container, give it a few seconds, then apply everything now (or, with `profile_id` set, just wait for the next scheduled cycle):
 
 ```bash
-docker exec -i valheim vsmm --config /config/vsmm_config.toml sync
-# or any of the other ways above, e.g.
-docker exec -i valheim vsmm --config /config/vsmm_config.toml import <profile-code>
+docker exec -i valheim /usr/local/bin/vsmm-update-and-restart.sh
 ```
+
+To load mods a different way first, run the command from [Ways to manage mods](#ways-to-manage-mods), for example `docker exec -i valheim vsmm --config /config/vsmm_config.toml import <profile-code>`, and then run the script above to put them on the server.
 
 `vsmm` has to run **inside** the container, not from the host against the bind mount: everything it touches is root-owned. After this, the schedule takes over.
 
@@ -341,7 +368,7 @@ docker exec -i valheim sh -c 'printf "log_level = \"debug\"\n" > /tmp/vsmm_debug
 
 **Do not leave `log_level` at `info` or lower in the container config.** At `info`, each run prints about 1,300 lines about which source won for each shared mod. In testing, running that on a schedule backed up the image's `supervisord`/`syslogd` output until `supervisorctl` hung. The game server kept running, but supervision didn't. The default (`error`) is what the container should use.
 
-**A mod I removed from the profile is still loaded.** Check that the hook ran the live sync: the script logs "syncing them into the live install" whenever mods changed. If you're running an older copy of the script, restart the container so the boot hook fetches the current one.
+**A mod I removed from the profile is still loaded.** Check that the hook ran the live sync: the script logs "syncing them into the live install" whenever mods changed. If you're running an older copy of the script, restart the container so the boot hook fetches the current one. To apply changes immediately instead of waiting for the next cycle, see [Applying changes right away](#applying-changes-right-away).
 
 **A mod is skipped with "pinned to X but no configured source offers it".** The version your profile names is gone from every source in `[sources] enabled`. The installed version is left alone. Either update the profile, or set `track_latest = true`.
 
