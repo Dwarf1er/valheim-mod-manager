@@ -40,7 +40,7 @@ pub async fn export_code(client: &ThunderstoreClient, target: &Target) -> AppRes
 ///
 /// `source` is classified by the engine's [`portability::ImportSource`], which
 /// dispatches on what it names on disk and falls back to a code, so no flag is
-/// needed to disambiguate and vmm decides nothing about the routing. A file or
+/// needed to disambiguate and vsmm decides nothing about the routing. A file or
 /// code import reinstalls each mod at
 /// its **latest** version (the engine's resolution is version-agnostic and the
 /// export's pinned version is not honored), so the installed versions are printed
@@ -311,7 +311,7 @@ async fn import_zip_with_sources(
 
 /// Copies an r2modman profile directory (one that already carries a `mods.yml`)
 /// into the target, then reinstalls any mod loader it names that arrived
-/// without an install record — the vmm-side counterpart of the engine's own
+/// without an install record — the vsmm-side counterpart of the engine's own
 /// `adopt_r2modman_dir_in`, which resolves that reinstall against a single
 /// client's manifest instead of `sources`' merged one.
 ///
@@ -474,7 +474,7 @@ async fn import_gale_dir(
 
 /// Builds the error [`import_gale_dir`] returns when some of the mods it found
 /// on disk could not be adopted, so the caller knows what is still stranded
-/// there and that a reconciling command (e.g. `vmm uninstall`) would sweep it
+/// there and that a reconciling command (e.g. `vsmm uninstall`) would sweep it
 /// as delisted before a retry finishes the job.
 fn unadopted_gale_dir_error(
   source_dir: &Path,
@@ -498,7 +498,7 @@ fn unadopted_gale_dir_error(
     detail.push_str(&format!("\n\nKnown reasons: {reasons}"));
   }
 
-  let suggestion = format!("vmm import {}", source_dir.display());
+  let suggestion = format!("vsmm import {}", source_dir.display());
 
   AppError::advice(
     "adopting the Gale profile stopped part way through.",
@@ -567,7 +567,7 @@ pub async fn reconcile_zip(
          mod(s). Nothing was changed.",
         previous.len()
       ),
-      &["vmm import --additive <source>"],
+      &["vsmm import --additive <source>"],
     ));
   }
 

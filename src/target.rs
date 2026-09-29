@@ -5,14 +5,14 @@ use std::path::PathBuf;
 pub const GAME: &str = "valheim";
 
 /// Where this invocation installs and tracks from. The engine owns the
-/// layout; vmm adds only the wording below.
+/// layout; vsmm adds only the wording below.
 pub type Target = thunderstore_engine::profile::target::InstallTarget;
 
 /// A phrase naming `target` for use inside a sentence, so a message can say which
 /// install root it is about without the caller branching on the mode.
 ///
 /// A free function rather than a method because `Target` is a foreign type. This
-/// is the only part of the target concept that stays in vmm: it is wording, and a
+/// is the only part of the target concept that stays in vsmm: it is wording, and a
 /// desktop client would write its own.
 pub fn describe(target: &Target) -> String {
   match &target.profile {

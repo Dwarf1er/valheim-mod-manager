@@ -44,7 +44,7 @@ pub async fn fetch_current(config: &GaleSyncConfig) -> AppResult<DesiredModlist>
   let id = config.profile_id.as_deref().ok_or_else(|| {
     AppError::advice(
       "no gale-sync profile is configured.",
-      "Set `profile_id` under `[gale_sync]` in vmm_config.toml.",
+      "Set `profile_id` under `[gale_sync]` in vsmm_config.toml.",
       &[],
     )
   })?;

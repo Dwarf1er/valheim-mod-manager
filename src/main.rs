@@ -81,7 +81,7 @@ fn missing_game_dir_error(dir: &std::path::Path) -> AppError {
   AppError::advice(
     "the configured `game_dir` is not a directory.",
     format!(
-      "vmm looked for it at:\n\n\x20   {}\n\nNothing was changed. Check the path \
+      "vsmm looked for it at:\n\n\x20   {}\n\nNothing was changed. Check the path \
        in your config against where the game is actually installed. `~` and \
        environment variables like `$HOME` are both expanded, so either form \
        works, but a name that is not set is left as written and would show up \
@@ -111,13 +111,13 @@ fn toggle_dispatch(
 
 /// Prints `error` in the house style and exits non-zero.
 ///
-/// The `vmm: ` prefix lives here and nowhere else, so no message body carries
+/// The `vsmm: ` prefix lives here and nowhere else, so no message body carries
 /// its own. `Display` is used deliberately: returning `AppResult` from `main`
 /// instead would let Rust's `Termination` impl format with `Debug`, which is
 /// what produced output like `Error: Other("...")`.
 #[cfg(not(tarpaulin_include))]
 fn report_and_exit(error: AppError) -> ! {
-  eprintln!("vmm: {error}");
+  eprintln!("vsmm: {error}");
 
   std::process::exit(1)
 }
@@ -139,7 +139,7 @@ async fn run() -> AppResult<()> {
     .unwrap_or_else(|err| panic!("An error has occurred getting the config: '{err}'"));
 
   logs::setup_logging(&config.log_level);
-  tracing::info!("Starting valheim mod manager");
+  tracing::info!("Starting valheim server mod manager");
 
   let base = config.base_dir();
   let progress: Arc<dyn thunderstore_engine::progress::ProgressReporter> =
@@ -260,7 +260,7 @@ mod tests {
   fn a_game_dir_that_is_not_a_directory_names_the_path_that_was_looked_for() {
     let message = missing_game_dir_error(Path::new("/games/Valhiem")).to_string();
 
-    // The path as vmm resolved it, so a typo or an unexpanded variable is
+    // The path as vsmm resolved it, so a typo or an unexpanded variable is
     // visible in the message rather than inferred from a later surprise.
     assert!(
       message.contains("/games/Valhiem"),

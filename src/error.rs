@@ -28,13 +28,13 @@ pub enum AppError {
   ConfigSerialization(String),
 }
 
-/// Renders a user-facing message in the shape every `vmm` message uses: a
+/// Renders a user-facing message in the shape every `vsmm` message uses: a
 /// one-line headline saying what happened, a paragraph saying why, then the
 /// commands that resolve it, indented four spaces so they can be copied
 /// straight out of the terminal.
 ///
 /// An empty `detail` or `next` is omitted rather than emitted as trailing blank
-/// lines, so a bare headline renders as exactly that one line. The `vmm: `
+/// lines, so a bare headline renders as exactly that one line. The `vsmm: `
 /// prefix is deliberately absent: `main` applies it once to whatever it prints,
 /// so a message embedding its own prefix would double it.
 pub fn advice_message(headline: &str, detail: &str, next: &[&str]) -> String {
@@ -76,12 +76,12 @@ mod tests {
     let message = advice_message(
       "there's nothing to install.",
       "No mods were named.",
-      &["vmm install <Owner-ModName>"],
+      &["vsmm install <Owner-ModName>"],
     );
 
     assert_eq!(
       message,
-      "there's nothing to install.\n\nNo mods were named.\n\n    vmm install <Owner-ModName>"
+      "there's nothing to install.\n\nNo mods were named.\n\n    vsmm install <Owner-ModName>"
     );
   }
 
@@ -92,8 +92,8 @@ mod tests {
       "just a headline."
     );
     assert_eq!(
-      advice_message("headline.", "", &["vmm list"]),
-      "headline.\n\n    vmm list"
+      advice_message("headline.", "", &["vsmm list"]),
+      "headline.\n\n    vsmm list"
     );
     assert_eq!(
       advice_message("headline.", "detail.", &[]),
@@ -104,15 +104,15 @@ mod tests {
   #[test]
   fn advice_indents_every_command_under_one_blank_line() {
     assert_eq!(
-      advice_message("headline.", "detail.", &["vmm list", "vmm update mods"]),
-      "headline.\n\ndetail.\n\n    vmm list\n    vmm update mods"
+      advice_message("headline.", "detail.", &["vsmm list", "vsmm update mods"]),
+      "headline.\n\ndetail.\n\n    vsmm list\n    vsmm update mods"
     );
   }
 
   #[test]
   fn app_error_advice_displays_the_rendered_message() {
-    let error = AppError::advice("headline.", "detail.", &["vmm list"]);
+    let error = AppError::advice("headline.", "detail.", &["vsmm list"]);
 
-    assert_eq!(error.to_string(), "headline.\n\ndetail.\n\n    vmm list");
+    assert_eq!(error.to_string(), "headline.\n\ndetail.\n\n    vsmm list");
   }
 }

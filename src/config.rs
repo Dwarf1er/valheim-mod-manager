@@ -6,7 +6,7 @@ use std::{fs::OpenOptions, path::Path};
 use crate::error::{AppError, AppResult};
 use crate::sources::SourceId;
 
-/// Which mod sources vmm resolves and installs from.
+/// Which mod sources vsmm resolves and installs from.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SourcesConfig {
   /// The configured sources, in priority order (see
@@ -56,9 +56,9 @@ impl Default for GaleSyncConfig {
   }
 }
 
-/// Application configuration loaded from vmm_config.toml.
+/// Application configuration loaded from vsmm_config.toml.
 ///
-/// This structure defines all user-configurable settings for the Valheim Mod Manager,
+/// This structure defines all user-configurable settings for the Valheim Server Mod Manager,
 /// including which mods to manage, logging preferences, and file system paths.
 #[derive(Serialize, Deserialize)]
 pub struct AppConfig {
@@ -69,7 +69,7 @@ pub struct AppConfig {
   #[serde(default)]
   pub game_dir: Option<String>,
   /// The base directory holding the package cache, exports, profiles, and the
-  /// client's download cache. Defaults to the XDG config home for vmm.
+  /// client's download cache. Defaults to the XDG config home for vsmm.
   #[serde(default)]
   pub data_dir: Option<String>,
   /// Ignore the versions named by imported lists (gale-sync, `.r2z`, profile
@@ -138,7 +138,7 @@ impl AppConfig {
 
 /// Expands `~` and environment variables in a path read from the config.
 ///
-/// [`shellexpand::full`] rather than `tilde` because vmm's own guidance offers a
+/// [`shellexpand::full`] rather than `tilde` because vsmm's own guidance offers a
 /// `$HOME`-prefixed example while the README shows the `~` form: whichever a user
 /// copies has to resolve, since an unexpanded `$HOME` yields a *relative* path
 /// that every install route is then silently created beneath.
@@ -154,12 +154,12 @@ pub fn expand_path(path: &str) -> std::path::PathBuf {
 }
 
 /// The example `game_dir` value offered in guidance: the directory the
-/// container setup in the README points vmm at.
+/// container setup in the README points vsmm at.
 pub fn example_game_dir() -> &'static str {
-  "/config/vmm_game"
+  "/config/vsmm_game"
 }
 
-/// The per-user config directory for vmm.
+/// The per-user config directory for vsmm.
 ///
 /// [`dirs::config_dir`] rather than the `xdg` crate because `xdg` is gated
 /// `#![cfg(any(unix, target_os = "redox"))]` and so compiles to an *empty crate*
@@ -171,14 +171,14 @@ pub fn example_game_dir() -> &'static str {
 ///
 /// `None` only when no home directory can be resolved at all.
 pub fn config_home() -> Option<std::path::PathBuf> {
-  dirs::config_dir().map(|dir| dir.join("vmm"))
+  dirs::config_dir().map(|dir| dir.join("vsmm"))
 }
 
 /// Resolves `name` inside `config_home`, creating that directory if it does not
 /// exist, and returns the full path.
 ///
 /// The directory creation is not incidental: it replaces the side effect of
-/// `xdg::place_config_file`, which vmm relied on for first run.
+/// `xdg::place_config_file`, which vsmm relied on for first run.
 /// [`create_missing_config_file`] opens with `create_new`, which fails with
 /// `NotFound` rather than creating a missing parent, so without this a machine
 /// with no config directory yet could never write its first config.
@@ -188,7 +188,7 @@ pub fn place_config_file(config_home: &Path, name: &str) -> std::io::Result<std:
   Ok(config_home.join(name))
 }
 
-/// The config directory for vmm, as a string.
+/// The config directory for vsmm, as a string.
 ///
 /// Used as the cache and data directory for downloaded manifests and mod files.
 #[cfg(not(tarpaulin_include))]
@@ -202,15 +202,15 @@ pub static APP_CACHE_DIR: std::sync::LazyLock<String> = std::sync::LazyLock::new
 /// Loads application configuration.
 ///
 /// If `config_override` is provided, loads only from that path.
-/// Otherwise, looks for a local `vmm_config.toml` first, then falls back to
-/// the XDG config location (`~/.config/vmm/vmm_config.toml`). If neither
+/// Otherwise, looks for a local `vsmm_config.toml` first, then falls back to
+/// the XDG config location (`~/.config/vsmm/vsmm_config.toml`). If neither
 /// exists, a default config is created at the XDG location.
 pub fn get_config(config_override: Option<&Path>) -> Result<AppConfig, ConfigError> {
   let home = config_home();
 
   get_config_from(
     config_override,
-    Path::new("vmm_config.toml"),
+    Path::new("vsmm_config.toml"),
     home.as_deref(),
   )
 }
@@ -252,13 +252,13 @@ fn get_config_from(
   if let Some(path) = config_override {
     builder = builder.add_source(File::with_name(path.to_str().unwrap_or_default()));
   } else {
-    let global_path = home.map(|dir| dir.join("vmm_config.toml"));
+    let global_path = home.map(|dir| dir.join("vsmm_config.toml"));
     let global_exists = global_path.as_deref().is_some_and(Path::exists);
 
     if !local_path.exists()
       && !global_exists
       && let Some(dir) = home
-      && let Ok(path) = place_config_file(dir, "vmm_config.toml")
+      && let Ok(path) = place_config_file(dir, "vsmm_config.toml")
     {
       let _ = create_missing_config_file(&path, &default_config_data);
     }
@@ -391,12 +391,12 @@ mod tests {
   fn a_local_config_layers_over_the_global_one() {
     let dir = tempdir().unwrap();
     let home = dir.path().join("home");
-    let local = dir.path().join("project/vmm_config.toml");
+    let local = dir.path().join("project/vsmm_config.toml");
 
     fs::create_dir_all(&home).unwrap();
     fs::create_dir_all(local.parent().unwrap()).unwrap();
     fs::write(
-      home.join("vmm_config.toml"),
+      home.join("vsmm_config.toml"),
       "log_level = \"warn\"\ngame_dir = \"/from/global\"\n",
     )
     .unwrap();
@@ -416,10 +416,10 @@ mod tests {
   fn the_global_config_is_read_when_there_is_no_local_one() {
     let dir = tempdir().unwrap();
     let home = dir.path().join("home");
-    let local = dir.path().join("project/vmm_config.toml");
+    let local = dir.path().join("project/vsmm_config.toml");
 
     fs::create_dir_all(&home).unwrap();
-    fs::write(home.join("vmm_config.toml"), "log_level = \"info\"\n").unwrap();
+    fs::write(home.join("vsmm_config.toml"), "log_level = \"info\"\n").unwrap();
 
     let loaded = get_config_from(None, &local, Some(&home)).unwrap();
 
@@ -433,14 +433,14 @@ mod tests {
   fn a_first_run_seeds_a_default_config_in_the_config_home() {
     let dir = tempdir().unwrap();
     let home = dir.path().join("home");
-    let local = dir.path().join("project/vmm_config.toml");
+    let local = dir.path().join("project/vsmm_config.toml");
 
     // Neither location holds a config and the config home does not exist yet,
     // which is exactly what a first run looks like.
     let loaded = get_config_from(None, &local, Some(&home)).unwrap();
 
     assert!(
-      home.join("vmm_config.toml").is_file(),
+      home.join("vsmm_config.toml").is_file(),
       "first run must leave a config the user can edit"
     );
     assert_eq!(loaded.log_level, AppConfig::default().log_level);
@@ -450,7 +450,7 @@ mod tests {
   #[test]
   fn discovery_survives_a_machine_with_no_resolvable_home() {
     let dir = tempdir().unwrap();
-    let local = dir.path().join("vmm_config.toml");
+    let local = dir.path().join("vsmm_config.toml");
 
     fs::write(&local, "log_level = \"trace\"\n").unwrap();
 
@@ -480,14 +480,14 @@ mod tests {
   #[test]
   fn base_dir_prefers_data_dir_and_expands_tilde() {
     let explicit = AppConfig {
-      data_dir: Some("/opt/vmm".to_string()),
+      data_dir: Some("/opt/vsmm".to_string()),
       ..Default::default()
     };
 
-    assert_eq!(explicit.base_dir(), std::path::PathBuf::from("/opt/vmm"));
+    assert_eq!(explicit.base_dir(), std::path::PathBuf::from("/opt/vsmm"));
 
     let expanded = AppConfig {
-      data_dir: Some("~/vmm-data".to_string()),
+      data_dir: Some("~/vsmm-data".to_string()),
       ..Default::default()
     };
 
@@ -532,8 +532,8 @@ mod tests {
     // existence check reports the path the user actually typed rather than a
     // silently shortened one.
     assert_eq!(
-      expand_path("$VMM_UNSET_FOR_TESTS/games"),
-      PathBuf::from("$VMM_UNSET_FOR_TESTS/games")
+      expand_path("$VSMM_UNSET_FOR_TESTS/games"),
+      PathBuf::from("$VSMM_UNSET_FOR_TESTS/games")
     );
   }
 
@@ -547,7 +547,7 @@ mod tests {
   fn expand_path_expands_environment_variables() {
     let home = std::env::var("HOME").unwrap();
 
-    // vmm's own guidance offers a `$HOME`-prefixed example, so a config written
+    // vsmm's own guidance offers a `$HOME`-prefixed example, so a config written
     // from that suggestion has to resolve to the same place as the `~` form the
     // README shows. Expanding only one of the two silently yields a *relative*
     // path, which every install route is then created beneath.
@@ -562,7 +562,7 @@ mod tests {
   }
 
   // Pins the Linux location across the move off the `xdg` crate. `xdg` produced
-  // `$XDG_CONFIG_HOME/vmm`, falling back to `~/.config/vmm`; a replacement that
+  // `$XDG_CONFIG_HOME/vsmm`, falling back to `~/.config/vsmm`; a replacement that
   // resolved anywhere else would silently strand every existing user's config.
   #[cfg(unix)]
   #[test]
@@ -570,7 +570,7 @@ mod tests {
     let expected = std::env::var_os("XDG_CONFIG_HOME")
       .map(PathBuf::from)
       .unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap()).join(".config"))
-      .join("vmm");
+      .join("vsmm");
 
     assert_eq!(config_home().unwrap(), expected);
   }
@@ -583,13 +583,13 @@ mod tests {
   #[test]
   fn place_config_file_creates_the_config_directory_when_it_is_missing() {
     let dir = tempdir().unwrap();
-    let home = dir.path().join("vmm");
+    let home = dir.path().join("vsmm");
 
     assert!(!home.exists());
 
-    let path = place_config_file(&home, "vmm_config.toml").unwrap();
+    let path = place_config_file(&home, "vsmm_config.toml").unwrap();
 
-    assert_eq!(path, home.join("vmm_config.toml"));
+    assert_eq!(path, home.join("vsmm_config.toml"));
     assert!(home.is_dir());
   }
 
@@ -598,9 +598,9 @@ mod tests {
   #[test]
   fn a_fresh_config_is_written_into_a_config_home_that_did_not_exist() {
     let dir = tempdir().unwrap();
-    let home = dir.path().join("vmm");
+    let home = dir.path().join("vsmm");
 
-    let path = place_config_file(&home, "vmm_config.toml").unwrap();
+    let path = place_config_file(&home, "vsmm_config.toml").unwrap();
 
     create_missing_config_file(&path, &AppConfig::default()).unwrap();
 

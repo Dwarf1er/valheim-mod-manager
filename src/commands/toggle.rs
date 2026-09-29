@@ -14,14 +14,14 @@ use thunderstore_engine::profile;
 pub fn run(eco: &Ecosystem, target: &Target, full_name: &str, enabled: bool) -> AppResult<()> {
   // Read the record first, not for its own sake: `set_enabled_in` reads the
   // same file immediately after, but reading it here first means an unreadable
-  // mods.yml speaks in vmm's advice voice instead of the engine's raw error
+  // mods.yml speaks in vsmm's advice voice instead of the engine's raw error
   // surfacing from inside the engine.
   super::read_modlist(target)?;
 
   profile::set_enabled_in(&target.dir, eco, GAME, full_name, enabled)?;
 
   if eco.modloader_package(full_name).is_some() {
-    println!("vmm: {}", loader_not_toggled_message(full_name));
+    println!("vsmm: {}", loader_not_toggled_message(full_name));
 
     return Ok(());
   }
@@ -42,7 +42,7 @@ fn loader_not_toggled_message(full_name: &str) -> String {
     &format!("{full_name} is the mod loader, so it was not changed."),
     "It is always active with no disabled state, matching r2modman, so it \
      cannot be enabled or disabled.",
-    &["vmm list"],
+    &["vsmm list"],
   )
 }
 
@@ -64,7 +64,7 @@ pub fn run_all(eco: &Ecosystem, target: &Target, enabled: bool) -> AppResult<()>
 
   // Read the record first, not for its own sake: the planner below reads the
   // same file immediately after, but reading it here first means an unreadable
-  // mods.yml speaks in vmm's advice voice instead of the engine's raw error
+  // mods.yml speaks in vsmm's advice voice instead of the engine's raw error
   // surfacing from inside the planner.
   super::read_modlist(target)?;
 
@@ -72,7 +72,7 @@ pub fn run_all(eco: &Ecosystem, target: &Target, enabled: bool) -> AppResult<()>
 
   if batch.changing.is_empty() && batch.already.is_empty() {
     println!(
-      "vmm: {}",
+      "vsmm: {}",
       nothing_toggleable_message(target, action, batch.loaders.is_empty())
     );
 
@@ -88,7 +88,7 @@ pub fn run_all(eco: &Ecosystem, target: &Target, enabled: bool) -> AppResult<()>
   let mut failed = Vec::new();
 
   for (name, error) in &outcome.failed {
-    eprintln!("vmm: couldn't {action} {name}: {error}");
+    eprintln!("vsmm: couldn't {action} {name}: {error}");
 
     failed.push(name.clone());
   }
@@ -118,7 +118,7 @@ fn nothing_toggleable_message(target: &Target, action: &str, mods_is_empty: bool
       crate::target::describe(target)
     ),
     detail,
-    &["vmm list"],
+    &["vsmm list"],
   )
 }
 
@@ -142,7 +142,7 @@ fn report_toggle_all(
        successfully.",
       failed.join(", ")
     ),
-    &["vmm list"],
+    &["vsmm list"],
   ))
 }
 
@@ -339,7 +339,7 @@ mod tests {
 
     let message = run_all(&eco, &target, false).unwrap_err().to_string();
 
-    // vmm's own advice voice, the same shape `list`/`update`/`uninstall` use,
+    // vsmm's own advice voice, the same shape `list`/`update`/`uninstall` use,
     // not the engine's raw parse error leaking through the planner.
     assert!(message.contains("the install record for"), "got: {message}");
     assert!(message.contains(&target.mods_yml().display().to_string()));

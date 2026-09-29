@@ -66,7 +66,7 @@ pub struct UninstallArgs {
   // `requires = "all"`. clap's own requires-validation excuses a missing
   // "required" argument whenever that argument itself conflicts with
   // something already present: since `all` is `conflicts_with = "mods"`,
-  // `#[arg(requires = "all")]` here would let `vmm uninstall --yes Owner-Mod`
+  // `#[arg(requires = "all")]` here would let `vsmm uninstall --yes Owner-Mod`
   // parse cleanly ("well, demanding `--all` would conflict with the `mods`
   // you already gave, so the missing `--all` is fine"), silently ignoring
   // `--yes`. `mods` is required unless `all` is present, so the only way
@@ -259,7 +259,7 @@ mod tests {
 
     assert!(force.get_help().is_some());
     // Opt-in: absent means the untracked-folder pre-flight check applies.
-    let parsed = AppCli::try_parse_from(["vmm", "uninstall", "Owner-Mod"]).unwrap();
+    let parsed = AppCli::try_parse_from(["vsmm", "uninstall", "Owner-Mod"]).unwrap();
 
     match parsed.command {
       Command::Uninstall(args) => {
@@ -269,7 +269,7 @@ mod tests {
       _ => panic!("expected the uninstall subcommand"),
     }
 
-    let forced = AppCli::try_parse_from(["vmm", "uninstall", "--force", "Owner-Mod"]).unwrap();
+    let forced = AppCli::try_parse_from(["vsmm", "uninstall", "--force", "Owner-Mod"]).unwrap();
 
     match forced.command {
       Command::Uninstall(args) => assert!(args.force),
@@ -279,7 +279,7 @@ mod tests {
 
   #[test]
   fn uninstall_takes_either_mods_or_all_and_an_opt_in_yes() {
-    let all = AppCli::try_parse_from(["vmm", "uninstall", "--all", "--yes"]).unwrap();
+    let all = AppCli::try_parse_from(["vsmm", "uninstall", "--all", "--yes"]).unwrap();
 
     match all.command {
       Command::Uninstall(args) => {
@@ -291,7 +291,7 @@ mod tests {
     }
 
     // --yes is opt-in: absent means the confirmation prompt applies.
-    let prompted = AppCli::try_parse_from(["vmm", "uninstall", "--all"]).unwrap();
+    let prompted = AppCli::try_parse_from(["vsmm", "uninstall", "--all"]).unwrap();
 
     match prompted.command {
       Command::Uninstall(args) => assert!(!args.yes),
@@ -299,12 +299,12 @@ mod tests {
     }
 
     // Both at once is rejected rather than one silently winning.
-    assert!(AppCli::try_parse_from(["vmm", "uninstall", "--all", "Owner-Mod"]).is_err());
+    assert!(AppCli::try_parse_from(["vsmm", "uninstall", "--all", "Owner-Mod"]).is_err());
     // Neither is rejected: an argument-less uninstall has no meaning.
-    assert!(AppCli::try_parse_from(["vmm", "uninstall"]).is_err());
+    assert!(AppCli::try_parse_from(["vsmm", "uninstall"]).is_err());
     // `--yes` means nothing without `--all`, so it is rejected rather than
     // silently ignored.
-    assert!(AppCli::try_parse_from(["vmm", "uninstall", "--yes", "Owner-Mod"]).is_err());
+    assert!(AppCli::try_parse_from(["vsmm", "uninstall", "--yes", "Owner-Mod"]).is_err());
   }
 
   #[test]
@@ -333,7 +333,7 @@ mod tests {
   #[test]
   fn toggle_takes_either_a_mod_name_or_all_but_not_both() {
     // A bare name still works.
-    let named = AppCli::try_parse_from(["vmm", "disable", "Owner-Mod"]).unwrap();
+    let named = AppCli::try_parse_from(["vsmm", "disable", "Owner-Mod"]).unwrap();
 
     match named.command {
       Command::Disable(args) => {
@@ -343,7 +343,7 @@ mod tests {
       _ => panic!("expected the disable subcommand"),
     }
 
-    let all = AppCli::try_parse_from(["vmm", "enable", "--all"]).unwrap();
+    let all = AppCli::try_parse_from(["vsmm", "enable", "--all"]).unwrap();
 
     match all.command {
       Command::Enable(args) => {
@@ -354,8 +354,8 @@ mod tests {
     }
 
     // Both at once is rejected rather than one silently winning.
-    assert!(AppCli::try_parse_from(["vmm", "enable", "--all", "Owner-Mod"]).is_err());
+    assert!(AppCli::try_parse_from(["vsmm", "enable", "--all", "Owner-Mod"]).is_err());
     // Neither is rejected too: an argument-less toggle has no meaning.
-    assert!(AppCli::try_parse_from(["vmm", "enable"]).is_err());
+    assert!(AppCli::try_parse_from(["vsmm", "enable"]).is_err());
   }
 }

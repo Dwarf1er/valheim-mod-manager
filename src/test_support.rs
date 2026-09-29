@@ -1,9 +1,9 @@
 //! Shared fixtures for command tests: a mock Thunderstore index plus a real mod
 //! archive, so the install pipeline runs end to end with no network access.
 //!
-//! This file is compiled twice — once under the `valheim_mod_manager` lib
+//! This file is compiled twice — once under the `valheim_server_mod_manager` lib
 //! target (whose only user is `sources.rs`'s own tests) and once under the
-//! `vmm` binary (whose `commands::*` tests use the rest of it) — so any one
+//! `vsmm` binary (whose `commands::*` tests use the rest of it) — so any one
 //! field or method is "unused" from either target's point of view alone.
 #![allow(dead_code)]
 

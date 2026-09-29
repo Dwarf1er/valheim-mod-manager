@@ -12,7 +12,7 @@ use thunderstore_engine::profile::{self, NotRemovable, UninstallBatch, modlist};
 /// before anything is removed, so one bad identifier cannot leave a partial
 /// uninstall behind. That refusal collapses to one sentence, so [`plan_batch`]
 /// asks [`profile::check_removable_batch`] for the typed reason instead and
-/// words each kind the way vmm always has.
+/// words each kind the way vsmm always has.
 ///
 /// The engine's `uninstall_mod_in` does not remove one mod's folders in
 /// isolation: it derives a keep-set from the *remaining* `mods.yml` and hands
@@ -36,7 +36,7 @@ pub fn run(eco: &Ecosystem, target: &Target, mods: &[String], force: bool) -> Ap
         ),
         "Nothing was removed. Identifiers are `Owner-ModName` and are \
          case-sensitive, so check the spelling against what is installed.",
-        &["vmm list"],
+        &["vsmm list"],
       ));
     }
   }
@@ -58,7 +58,7 @@ pub fn run(eco: &Ecosystem, target: &Target, mods: &[String], force: bool) -> Ap
   super::report_batch_failures(&outcome)
 }
 
-/// Drops the `.vmm_state.json` sidecar's entries for anything no longer in
+/// Drops the `.vsmm_state.json` sidecar's entries for anything no longer in
 /// `mods.yml`, so it never outlives what is actually installed. Called after
 /// every uninstall that ran (even a partial one, since `succeeded` items are
 /// genuinely gone either way).
@@ -72,7 +72,7 @@ fn prune_stale_sources(target: &Target) -> AppResult<()> {
   crate::sources::prune_sources(target, &keep)
 }
 
-/// Plans an uninstall batch, wording the engine's typed refusal as vmm's two
+/// Plans an uninstall batch, wording the engine's typed refusal as vsmm's two
 /// distinct advice messages when a subject cannot be removed exactly.
 ///
 /// `plan_uninstall_batch` returns a single `Err` for both an absent install
@@ -103,14 +103,14 @@ fn plan_batch(
   let blocked = profile::check_removable_batch(&target.dir, eco, &subjects);
 
   if let Some((name, refusal)) = blocked.into_iter().next() {
-    let install = format!("vmm install {name}");
+    let install = format!("vsmm install {name}");
 
     return Err(match refusal {
       NotRemovable::RecordUnreadable { path, source, .. } => AppError::advice(
         format!("{name}'s install record can't be read, so it cannot be removed exactly."),
         format!(
-          "vmm found a record at {} but couldn't parse it: {source}\n\nThe record \
-           is unreadable, not absent, so vmm will not guess what it once tracked. \
+          "vsmm found a record at {} but couldn't parse it: {source}\n\nThe record \
+           is unreadable, not absent, so vsmm will not guess what it once tracked. \
            Nothing was removed.\n\nReinstall {name} to rebuild its record, then \
            try again, or remove its files by hand.",
           path.display()
@@ -120,8 +120,8 @@ fn plan_batch(
       NotRemovable::RecordAbsent { path, .. } => AppError::advice(
         format!("{name} has no install record, so it cannot be removed exactly."),
         format!(
-          "vmm expected one at {}. This target was adopted from disk rather than \
-           installed, so vmm does not know which files the loader placed and will \
+          "vsmm expected one at {}. This target was adopted from disk rather than \
+           installed, so vsmm does not know which files the loader placed and will \
            not guess. Nothing was removed.\n\nReinstall the loader to give it a \
            record, then try again, or remove its files by hand.",
           path.display()
@@ -139,19 +139,19 @@ fn plan_batch(
 fn untracked_error(target: &Target, batch: &UninstallBatch) -> AppError {
   AppError::advice(
     format!(
-      "{} holds mod folders that vmm does not track.",
+      "{} holds mod folders that vsmm does not track.",
       crate::target::describe(target)
     ),
     format!(
       "An uninstall reconciles every install route against {}, so these \
        would be deleted along with the mods you named:\n\n  {}\n\nNothing \
-       was removed. Bring them under management with `vmm install \
+       was removed. Bring them under management with `vsmm install \
        <Owner-ModName>` if you installed them by hand. Otherwise, re-run \
        with `--force` to delete them too.",
       target.mods_yml().display(),
       render_untracked(&batch.untracked)
     ),
-    &["vmm install <Owner-ModName>"],
+    &["vsmm install <Owner-ModName>"],
   )
 }
 
@@ -168,7 +168,7 @@ fn render_untracked(untracked: &[PathBuf]) -> String {
 /// How many mods `batch` accounts for, loaders included.
 ///
 /// A local helper rather than a method on `UninstallBatch`: it is a foreign
-/// type, so vmm cannot add an inherent method to it.
+/// type, so vsmm cannot add an inherent method to it.
 fn batch_len(batch: &UninstallBatch) -> usize {
   batch.mods.len() + batch.loaders.len()
 }
@@ -194,14 +194,14 @@ pub fn run_all(
 
   if batch_len(&batch) == 0 {
     println!(
-      "vmm: {}",
+      "vsmm: {}",
       crate::error::advice_message(
         &format!(
           "there is nothing to uninstall in {}.",
           crate::target::describe(target)
         ),
         "No mods are installed here, so nothing was changed.",
-        &["vmm list"],
+        &["vsmm list"],
       )
     );
 
@@ -212,7 +212,7 @@ pub fn run_all(
     if !batch.untracked.is_empty() && !force {
       return Err(AppError::advice(
         format!(
-          "{} holds mod folders that vmm does not track.",
+          "{} holds mod folders that vsmm does not track.",
           crate::target::describe(target)
         ),
         format!(
@@ -223,7 +223,7 @@ pub fn run_all(
           target.mods_yml().display(),
           render_untracked(&batch.untracked)
         ),
-        &["vmm uninstall --all --yes --force"],
+        &["vsmm uninstall --all --yes --force"],
       ));
     }
   } else if !confirm(target, &batch)? {
@@ -319,7 +319,7 @@ fn no_terminal_error(target: &Target, batch: &UninstallBatch) -> AppError {
       crate::target::describe(target),
       target.dir.display()
     ),
-    &["vmm uninstall --all --yes"],
+    &["vsmm uninstall --all --yes"],
   )
 }
 
@@ -349,7 +349,7 @@ pub fn confirm_uninstall_all(target: &Target, batch: &UninstallBatch) -> AppResu
 
   if !batch.untracked.is_empty() {
     println!(
-      "\nThese mod folders aren't tracked by vmm and will be removed as \
+      "\nThese mod folders aren't tracked by vsmm and will be removed as \
        well:\n  {}",
       render_untracked(&batch.untracked)
     );
@@ -398,10 +398,10 @@ mod tests {
       "the error must name the target; got: {message}"
     );
     // `list::run` reads this same file through this same function before doing
-    // anything else, so offering `vmm list` as the way forward promises a
+    // anything else, so offering `vsmm list` as the way forward promises a
     // command that is guaranteed to fail with this exact message again.
     assert!(
-      !message.contains("vmm list"),
+      !message.contains("vsmm list"),
       "the advice must not be a command that reproduces the error; got: {message}"
     );
     assert!(message.contains("Nothing was changed"), "got: {message}");
@@ -608,7 +608,7 @@ mod tests {
       "the error must name the mod; got: {message}"
     );
     assert!(
-      message.contains("vmm list"),
+      message.contains("vsmm list"),
       "the error must say how to see what is installed; got: {message}"
     );
   }

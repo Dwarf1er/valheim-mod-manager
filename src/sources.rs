@@ -24,7 +24,7 @@
 //!
 //! `mods.yml`'s schema is the engine's own and has no room for "which source did
 //! this come from", so that attribution is tracked in a sidecar file,
-//! `.vmm_state.json`, next to it (see
+//! `.vsmm_state.json`, next to it (see
 //! [`state_file`](crate::sources::state_file)), which also holds version pins.
 
 use crate::error::{AppError, AppResult};
@@ -50,7 +50,7 @@ pub const HEXIUM_BASE_URL: &str = "https://valheim.hexium.gg";
 /// `/c/valheim/api/v1/package/` serves.
 pub const HEXIUM_PACKAGE_INDEX_URL: &str = "https://valheim.hexium.gg/api/v1/package/";
 
-/// A mod repository vmm can install from.
+/// A mod repository vsmm can install from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum SourceId {
@@ -448,14 +448,14 @@ pub fn unavailable_pins(index: &PackageIndex, pins: &HashMap<String, String>) ->
 pub fn warn_unavailable_pins(missing: &[String], pins: &HashMap<String, String>) {
   for name in missing {
     eprintln!(
-      "vmm: warning: {name} is pinned to {} but no configured source offers it; \
+      "vsmm: warning: {name} is pinned to {} but no configured source offers it; \
        leaving it as it is",
       pins[name]
     );
   }
 }
 
-/// What vmm remembers about one installed mod that `mods.yml` has no room for.
+/// What vsmm remembers about one installed mod that `mods.yml` has no room for.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 struct ModState {
   /// Which configured source the mod was last resolved from. Informational.
@@ -472,60 +472,30 @@ struct ModState {
 ///
 /// `mods.yml`'s schema is the engine's own (kept r2modman/Gale-compatible) and
 /// the engine rewrites each entry wholesale, so there is no room in it for
-/// either. This lives beside it instead, and is treated the same way vmm treats
+/// either. This lives beside it instead, and is treated the same way vsmm treats
 /// every other record: missing or unreadable reads as empty (no source known,
 /// nothing pinned, which fails toward "latest").
 pub fn state_file(target: &Target) -> PathBuf {
-  target.dir.join(".vmm_state.json")
+  target.dir.join(".vsmm_state.json")
 }
 
-/// Reads the state. When there is no `.vmm_state.json` yet, falls back to the
-/// two sidecars it replaced (`.vmm_sources.json` and `.vmm_pins.json`), so an
-/// existing install keeps its records; the next write saves the merged state
-/// and removes them.
+/// Reads the state, defaulting to empty when the file is missing or unreadable.
 fn read_state(target: &Target) -> HashMap<String, ModState> {
-  if let Ok(contents) = std::fs::read_to_string(state_file(target)) {
-    return serde_json::from_str(&contents).unwrap_or_default();
-  }
+  let Ok(contents) = std::fs::read_to_string(state_file(target)) else {
+    return HashMap::new();
+  };
 
-  let mut state: HashMap<String, ModState> = HashMap::new();
-
-  if let Ok(contents) = std::fs::read_to_string(target.dir.join(LEGACY_SOURCES_FILE))
-    && let Ok(sources) = serde_json::from_str::<HashMap<String, SourceId>>(&contents)
-  {
-    for (name, source) in sources {
-      state.entry(name).or_default().source = Some(source);
-    }
-  }
-
-  if let Ok(contents) = std::fs::read_to_string(target.dir.join(LEGACY_PINS_FILE))
-    && let Ok(pins) = serde_json::from_str::<HashMap<String, String>>(&contents)
-  {
-    for (name, pin) in pins {
-      state.entry(name).or_default().pin = Some(pin);
-    }
-  }
-
-  state
+  serde_json::from_str(&contents).unwrap_or_default()
 }
-
-/// The two files [`state_file`] replaced.
-const LEGACY_SOURCES_FILE: &str = ".vmm_sources.json";
-const LEGACY_PINS_FILE: &str = ".vmm_pins.json";
 
 /// Writes the state (sorted by name, so the file is stable across writes),
-/// dropping entries that hold nothing and retiring the legacy sidecars.
+/// dropping entries that hold nothing.
 fn write_state(target: &Target, mut state: HashMap<String, ModState>) -> AppResult<()> {
   state.retain(|_, entry| *entry != ModState::default());
 
   let sorted: std::collections::BTreeMap<_, _> = state.into_iter().collect();
 
   std::fs::write(state_file(target), serde_json::to_string_pretty(&sorted)?)?;
-
-  // Best effort: a leftover legacy file is ignored once the new one exists.
-  for legacy in [LEGACY_SOURCES_FILE, LEGACY_PINS_FILE] {
-    let _ = std::fs::remove_file(target.dir.join(legacy));
-  }
 
   Ok(())
 }
@@ -690,7 +660,6 @@ mod tests {
       Some("1.2.3")
     );
     assert_eq!(read_sources(&target).len(), 2);
-    assert!(!target.dir.join(".vmm_pins.json").exists());
 
     // Dropping a pin keeps the source; pruning drops both.
     remove_pins(&target, &["Owner-ModA".to_string()]).unwrap();
@@ -704,47 +673,6 @@ mod tests {
     prune_sources(&target, &HashSet::from(["Owner-ModA".to_string()])).unwrap();
     assert!(read_pins(&target).is_empty());
     assert_eq!(read_sources(&target).len(), 1);
-  }
-
-  #[test]
-  fn the_legacy_sidecars_are_read_and_retired_on_the_first_write() {
-    let fixture = Fixture::new();
-    let target = fixture.target();
-
-    std::fs::write(
-      target.dir.join(".vmm_sources.json"),
-      r#"{"Owner-ModA":"hexium"}"#,
-    )
-    .unwrap();
-    std::fs::write(
-      target.dir.join(".vmm_pins.json"),
-      r#"{"Owner-ModA":"1.0.0"}"#,
-    )
-    .unwrap();
-
-    assert_eq!(
-      read_sources(&target).get("Owner-ModA"),
-      Some(&SourceId::Hexium)
-    );
-    assert_eq!(
-      read_pins(&target).get("Owner-ModA").map(String::as_str),
-      Some("1.0.0")
-    );
-
-    record_sources(
-      &target,
-      [("Owner-ModB".to_string(), SourceId::Thunderstore)],
-    )
-    .unwrap();
-
-    assert!(state_file(&target).exists());
-    assert!(!target.dir.join(".vmm_sources.json").exists());
-    assert!(!target.dir.join(".vmm_pins.json").exists());
-    assert_eq!(read_sources(&target).len(), 2);
-    assert_eq!(
-      read_pins(&target).get("Owner-ModA").map(String::as_str),
-      Some("1.0.0")
-    );
   }
 
   #[test]

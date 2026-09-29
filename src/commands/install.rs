@@ -44,7 +44,7 @@ pub async fn run(
 /// layer is not scoped to a client's own `base_url`.
 ///
 /// Records which source each succeeded mod came from in the target's
-/// `.vmm_state.json` sidecar.
+/// `.vsmm_state.json` sidecar.
 ///
 /// Installs the named mods at their latest version. Mods pinned by an earlier
 /// list import keep their pinned version unless `track_latest` is set.
@@ -92,7 +92,7 @@ async fn install_with_index(
 ) -> AppResult<Vec<String>> {
   // Read the record first, not for its own sake: the planner below reads the
   // same file immediately after, but reading it here first means an unreadable
-  // mods.yml speaks in vmm's advice voice instead of the engine's raw error
+  // mods.yml speaks in vsmm's advice voice instead of the engine's raw error
   // surfacing from inside the planner.
   super::read_modlist(target)?;
 
@@ -404,7 +404,7 @@ mod tests {
       .unwrap_err()
       .to_string();
 
-    // vmm's own advice voice, the same shape `list`/`update`/`uninstall` use,
+    // vsmm's own advice voice, the same shape `list`/`update`/`uninstall` use,
     // not the engine's raw parse error leaking through the planner.
     assert!(message.contains("the install record for"), "got: {message}");
     assert!(message.contains(&target.mods_yml().display().to_string()));

@@ -1,24 +1,23 @@
 [package]
-name = "valheim-mod-manager"
-version = "0.4.0"
+name = "valheim-server-mod-manager"
+version = "0.1.0"
 edition = "2024"
-description = "Mod manager for Valheim game"
-authors = ["Endoze <endoze@endozemedia.com>", "LinkTheDot <CirnoStrongest9909@hotmail.com>"]
+description = "Mod manager for Valheim dedicated servers, following a Gale profile sync"
+authors = ["Endoze <endoze@endozemedia.com>", "LinkTheDot <CirnoStrongest9909@hotmail.com>", "Dwarf1er"]
 license = "MIT"
 readme = "README.md"
-repository = "https://github.com/Endoze/valheim-mod-manager"
-documentation = "https://docs.rs/valheim-mod-manager"
-homepage = "https://github.com/Endoze/valheim-mod-manager"
+repository = "https://github.com/Dwarf1er/valheim-server-mod-manager"
+homepage = "https://github.com/Dwarf1er/valheim-server-mod-manager"
 rust-version = "1.94.0"
 categories = ["game-development", "command-line-utilities"]
 keywords = ["valheim", "mod", "manager", "game", "modding"]
 
 [lib]
-name = "valheim_mod_manager"
+name = "valheim_server_mod_manager"
 path = "src/lib.rs"
 
 [[bin]]
-name = "vmm"
+name = "vsmm"
 path = "src/main.rs"
 
 [dependencies]

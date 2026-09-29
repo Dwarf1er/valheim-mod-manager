@@ -11,8 +11,8 @@ use thunderstore_engine::ecosystem::Ecosystem;
 /// The fetch happens before anything on disk is touched, so an unreachable
 /// gale-sync (or an unconfigured one) fails here with the target left exactly
 /// as it was. Callers that want "keep running with whatever is installed" on
-/// failure, like `scripts/vmm-update-and-restart.sh`, get that by tolerating
-/// this command's non-zero exit rather than vmm guessing a policy.
+/// failure, like `scripts/vsmm-update-and-restart.sh`, get that by tolerating
+/// this command's non-zero exit rather than vsmm guessing a policy.
 pub async fn run(
   config: &GaleSyncConfig,
   eco: &Ecosystem,

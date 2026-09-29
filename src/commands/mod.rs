@@ -18,7 +18,7 @@ use thunderstore_engine::profile::modlist::{self, ProfileMod};
 /// error-path change, so this adds only which target it was about.
 ///
 /// Deliberately suggests no follow-up command. Every command that touches a
-/// target reads the record through here first, `list` included, so any `vmm`
+/// target reads the record through here first, `list` included, so any `vsmm`
 /// invocation offered as the next step would fail with this same message; the
 /// only way forward is to repair the file itself.
 pub fn read_modlist(target: &Target) -> AppResult<Vec<ProfileMod>> {
@@ -29,7 +29,7 @@ pub fn read_modlist(target: &Target) -> AppResult<Vec<ProfileMod>> {
         crate::target::describe(target)
       ),
       format!(
-        "{error}\n\nNothing was changed. Every vmm command reads this file \
+        "{error}\n\nNothing was changed. Every vsmm command reads this file \
          before doing anything, so each will refuse the same way until it \
          parses. Repair {} by hand if you can read what it once held; \
          otherwise delete it and reinstall the mods you had, which writes a \
@@ -101,7 +101,7 @@ pub fn report_batch_failures(outcome: &BatchOutcome) -> AppResult<()> {
       "These were left as they were:\n\n  {}{tail}",
       named.join("\n  ")
     ),
-    &["vmm list"],
+    &["vsmm list"],
   ))
 }
 

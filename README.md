@@ -1,547 +1,368 @@
-# Valheim Mod Manager (vmm)
+<div align="center">
 
-[![Build Status](https://github.com/endoze/valheim-mod-manager/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/endoze/valheim-mod-manager/actions?query=branch%3Amaster)
-[![Coverage Status](https://coveralls.io/repos/github/endoze/valheim-mod-manager/badge.svg?branch=master)](https://coveralls.io/github/endoze/valheim-mod-manager?branch=master)
-[![Crate](https://img.shields.io/crates/v/valheim-mod-manager.svg)](https://crates.io/crates/valheim-mod-manager)
+# vsmm
+##### Keep a Valheim dedicated server's mods in sync with a Gale profile
 
-A command-line tool for managing and automatically downloading Valheim mods and their dependencies.
+![License](https://img.shields.io/github/license/Dwarf1er/valheim-server-mod-manager?style=for-the-badge)
+![Issues](https://img.shields.io/github/issues/Dwarf1er/valheim-server-mod-manager?style=for-the-badge)
+![PRs](https://img.shields.io/github/issues-pr/Dwarf1er/valheim-server-mod-manager?style=for-the-badge)
+![Contributors](https://img.shields.io/github/contributors/Dwarf1er/valheim-server-mod-manager?style=for-the-badge)
+![Stars](https://img.shields.io/github/stars/Dwarf1er/valheim-server-mod-manager?style=for-the-badge)
 
-## Features
+</div>
 
-- Installs mods and their full dependency closure from Thunderstore or Hexium
-- Tracks what is installed in an r2modman-compatible `mods.yml`, so an install
-  can be uninstalled exactly, without guessing from directory contents
-- Enables and disables mods in place, without uninstalling them
-- Installs into a single target: your `game_dir`
-- Exports and imports profiles as `.r2z` files, Thunderstore/Gale profile codes, or
-  live r2modman/Gale profile directories, where file/code imports reconcile by default (`--additive` to opt out),
-  plus `vmm sync` against a gale-sync profile
-- Shares one download and extraction cache across every target
-- Shows live progress while it works: a spinner for the package index fetch and
-  a byte bar per mod download
+`vsmm` is a mod manager for Valheim **dedicated servers**, built to run inside the [community Valheim server Docker image](https://github.com/community-valheim-tools/valheim-server-docker). Point it at a [Gale profile sync](https://github.com/Kesomannen/gale-sync) id and the server follows that profile on its own: mods are installed, removed, and held at the versions the profile names, and the server restarts only when something actually changed. Profile sync is the headline feature, but not the only way in: you can also import a profile code, an `.r2z` file, or an r2modman or Gale profile folder, or install mods by hand (see [Ways to manage mods](#ways-to-manage-mods)).
 
-## Installation
+It's a hard fork of [Endoze/valheim-mod-manager](https://github.com/Endoze/valheim-mod-manager), a desktop client, and this fork shaped it to specifically be a server-side tool. A huge thank you to [Endoze](https://github.com/endoze) for all the amazing work on `vmm` without which this project wouldn't exist. This truly is a modification built entirely upon the massive work that went into `vmm`.
 
-### From Source
+Mods come from [Thunderstore](https://thunderstore.io) and [Hexium](https://valheim.hexium.gg).
+
+## Table of Contents
+
+<!-- mtoc-start -->
+
+* [Quickstart](#quickstart)
+* [Why this fork](#why-this-fork)
+* [How it works](#how-it-works)
+* [Ways to manage mods](#ways-to-manage-mods)
+* [Setup](#setup)
+* [Configuration](#configuration)
+* [Version pinning](#version-pinning)
+* [Commands](#commands)
+* [Under the hood](#under-the-hood)
+  * [Where mods come from](#where-mods-come-from)
+  * [Files vsmm keeps](#files-vsmm-keeps)
+  * [The Docker integration](#the-docker-integration)
+* [Troubleshooting](#troubleshooting)
+* [Building from source](#building-from-source)
+* [Acknowlegements](#acknowlegements)
+* [License](#license)
+
+<!-- mtoc-end -->
+
+## Quickstart
+
+Already running the [community Valheim server image](https://github.com/community-valheim-tools/valheim-server-docker) with `BEPINEX=true`? Three steps and your server follows a Gale profile.
+
+**1. Add a config file** named `vsmm_config.toml` to the folder you mount at `/config`, using the short code Gale gives you when you sync a profile (for example `LRSZM0`):
+
+```toml
+game_dir = "/config/vsmm_game"
+data_dir = "/config/vsmm"
+
+[sources]
+enabled = ["hexium", "thunderstore"]
+
+[gale_sync]
+profile_id = "YOUR-PROFILE-SYNC-ID"
+```
+
+**2. Add these to your compose file**, under the server's `environment:`:
+
+```yaml
+    environment:
+      BEPINEX: "true"
+      POST_BOOTSTRAP_HOOK: >-
+        curl --proto "=https" --tlsv1.2 -LsSf
+        https://github.com/Dwarf1er/valheim-server-mod-manager/releases/latest/download/valheim-server-mod-manager-installer.sh
+        | VALHEIM_SERVER_MOD_MANAGER_INSTALL_DIR=/usr/local/bin sh
+        && curl --proto "=https" --tlsv1.2 -LsSf
+        https://raw.githubusercontent.com/Dwarf1er/valheim-server-mod-manager/master/scripts/vsmm-update-and-restart.sh
+        -o /usr/local/bin/vsmm-update-and-restart.sh
+        && chmod +x /usr/local/bin/vsmm-update-and-restart.sh
+      POST_UPDATE_CHECK_HOOK: /usr/local/bin/vsmm-update-and-restart.sh
+```
+
+Using `docker run` instead? Pass the same three as `-e NAME='value'` flags.
+
+**3. Recreate the container and run the first sync:**
 
 ```bash
-# Clone the repository
-git clone https://github.com/Endoze/valheim-mod-manager.git
-cd valheim-mod-manager
-
-# Install the application
-cargo install --path .
-
-# The binary will be installed in your Cargo bin directory
+docker compose up -d
+docker compose exec valheim vsmm --config /config/vsmm_config.toml sync
 ```
+
+Replace `valheim` with your service name. That's it: from here on, every update cycle (every 15 minutes by default) re-checks the profile, installs and removes what changed, and restarts the server only if something did.
+
+Mods you placed in `/config/bepinex` by hand are left where they are. `vsmm` only manages what it installed itself. Starting from scratch, want to skip the profile, or curious what the hook does? See [Setup](#setup) and [Ways to manage mods](#ways-to-manage-mods).
+
+## Why this fork
+
+The original [valheim-mod-manager](https://github.com/Endoze/valheim-mod-manager), by Endoze, is an incredible desktop cli mod manager, and everything this fork does with mods is built on their work. This fork wanted that same engine for a different job: a dedicated server in a Docker container, where nobody is at the keyboard, there's no Steam client, and the mod list should simply follow whatever the admins decide.
+
+Serving both a desktop and a server well would have meant carrying a lot of options that get in each other's way, so this fork went its own direction and set aside the parts a headless server doesn't need. `vmm` is truly an amazing tool, we just needed to tweak it a little bit for our own usecase!
+
+**Set aside:**
+
+- `launch` and the Steam/Proton machinery around it.
+- Named profiles and the `--profile` flags. There is one target, `game_dir`.
+- `migrate` and the old `mod_list` / `install_dir` config keys. This fork starts from a clean config, so there's no upgrade path from the desktop tool's config.
+- The Windows and macOS builds. Releases are a single static amd64 Linux binary.
+
+**Added:**
+
+- `vsmm sync`, which follows a [Gale profile sync](https://github.com/Kesomannen/gale-sync) id and is checked on every update cycle.
+- Reconciliation by default: imports and sync uninstall what the source no longer lists (`--additive` opts out), and refuse to do so against an empty list.
+- Version pinning, so the server runs the versions a profile names instead of drifting to latest (`track_latest` opts out).
+- The hook script that ties it to the image's update schedule, copies changes into the live install, and restarts the server only when something changed.
+- Hexium as a second mod source, resolved alongside Thunderstore.
+
+Mod resolution, installing, and the `mods.yml` record still come from [thunderstore-engine](https://github.com/Endoze/thunderstore-engine), used unchanged as a normal dependency.
+
+## How it works
+
+The image already runs an update check on a schedule (`UPDATE_CRON`, every 15 minutes by default) and lets you hook into it. `vsmm` plugs into that hook:
+
+```
+Gale profile sync -> vsmm sync -> /config/bepinex -> image sync -> live server
+   (the truth)      install, prune,   (persistent)    (rsync into      restarted only
+                    pin to versions                    /opt/valheim)    if mods changed
+```
+
+Every cycle, `scripts/vsmm-update-and-restart.sh` does the following:
+
+1. Refreshes the package indexes.
+2. If a Gale profile is configured, runs `vsmm sync`: fetches it, installs what it names at the versions it names, and uninstalls anything it no longer lists.
+3. Runs `vsmm update mods`: brings unpinned mods to their latest versions (pinned ones stay put).
+4. If the installed mods changed, copies them into the live install and restarts the game server. Otherwise it does nothing.
+
+If Gale is unreachable, the cycle keeps whatever is installed and carries on. A server never fails to boot because a web service was down.
+
+## Ways to manage mods
+
+Gale profile sync is one of several ways to tell `vsmm` what the server should run. All of these work inside the container (`docker exec -i valheim vsmm --config /config/vsmm_config.toml …`):
+
+| You have | Run | What happens |
+|---|---|---|
+| A Gale profile sync id | `vsmm sync` (or set `profile_id` and let the schedule do it) | Installs what the profile names at its versions, removes what it doesn't list, and keeps following it |
+| A profile code (Thunderstore's, or a Gale one, including Hexium-only mods) | `vsmm import <code>` | One-time import at the listed versions; removes what the code doesn't list |
+| An `.r2z` export file | `vsmm import ./profile.r2z` | Same as a profile code |
+| An r2modman profile folder | `vsmm import <folder>` | Adopts the folder as it is, at the versions it recorded |
+| A live Gale profile folder | `vsmm import <folder>` | Reinstalls every mod it finds, at latest (Gale records no versions on disk) |
+| A few mods you want | `vsmm install Owner-Mod …` | Installs them (and their dependencies) at latest |
+
+**Using them alongside profile sync.** If `[gale_sync] profile_id` is set, every scheduled cycle reconciles the server to that profile, so anything added by hand or by another import that the profile doesn't list will be removed on the next cycle. That's intentional: the profile is the source of truth.
+
+If you'd rather manage the server with imports and `install` instead, leave `profile_id` unset. The scheduled cycle then only runs `vsmm update mods`: unpinned mods move to latest, pinned ones (from an import) stay put, and nothing is ever pruned. The script logs that sync isn't configured on each cycle; that's expected.
+
+## Setup
+
+**1. Config file.** Create `vsmm_config.toml` in your `/config` volume:
+
+```toml
+game_dir = "/config/vsmm_game"
+data_dir = "/config/vsmm"
+
+[sources]
+enabled = ["hexium", "thunderstore"]
+
+# Optional: leave this out to manage mods with `vsmm import` / `vsmm install` instead
+[gale_sync]
+profile_id = "YOUR-PROFILE-SYNC-ID"
+```
+
+Keep `log_level` unset (it defaults to `error`). See [Troubleshooting](#troubleshooting) for why.
+
+List `hexium` first if you use it: Gale uploads profile codes that contain Hexium-only mods to Hexium's endpoint, and `vsmm` tries sources in this order.
+
+**2. Container.** Add two environment variables to the image. They install `vsmm` and the hook script at each boot, then run the script on the image's update schedule:
+
+```yaml
+services:
+  valheim:
+    image: ghcr.io/community-valheim-tools/valheim-server
+    ports:
+      - "2456-2457:2456-2457/udp"
+    volumes:
+      - ./config:/config
+      - ./data:/opt/valheim
+    environment:
+      BEPINEX: "true"
+      SERVER_NAME: "My Server"
+      WORLD_NAME: "MyWorld"
+      SERVER_PASS: "change-me"
+      POST_BOOTSTRAP_HOOK: >-
+        curl --proto "=https" --tlsv1.2 -LsSf
+        https://github.com/Dwarf1er/valheim-server-mod-manager/releases/latest/download/valheim-server-mod-manager-installer.sh
+        | VALHEIM_SERVER_MOD_MANAGER_INSTALL_DIR=/usr/local/bin sh
+        && curl --proto "=https" --tlsv1.2 -LsSf
+        https://raw.githubusercontent.com/Dwarf1er/valheim-server-mod-manager/master/scripts/vsmm-update-and-restart.sh
+        -o /usr/local/bin/vsmm-update-and-restart.sh
+        && chmod +x /usr/local/bin/vsmm-update-and-restart.sh
+      POST_UPDATE_CHECK_HOOK: /usr/local/bin/vsmm-update-and-restart.sh
+```
+
+`BEPINEX=true` is required. `vsmm` installs mods, but the image is what loads BepInEx.
+
+**3. First run.** `vsmm` only appears on the container's `PATH` after the first boot with the hook. Start the container, then load your mods by hand (or, with `profile_id` set, just wait for the next scheduled cycle):
+
+```bash
+docker exec -i valheim vsmm --config /config/vsmm_config.toml sync
+# or any of the other ways above, e.g.
+docker exec -i valheim vsmm --config /config/vsmm_config.toml import <profile-code>
+```
+
+`vsmm` has to run **inside** the container, not from the host against the bind mount: everything it touches is root-owned. After this, the schedule takes over.
 
 ## Configuration
 
-`vmm` looks for configuration in the following order:
+The config file is read from `vsmm_config.toml` in the working directory and/or the user config directory (`~/.config/vsmm/`); the local file wins key by key. `--config <path>` bypasses that lookup. In the container it's `/config/vsmm_config.toml`.
 
-1. A `vmm_config.toml` in the current directory (local config)
-2. `~/.config/vmm/vmm_config.toml` (global XDG config)
+| Key | Default | Meaning |
+|---|---|---|
+| `game_dir` | (required) | The directory `vsmm` installs into. In the container, `/config/vsmm_game`. `~` and `$VARS` are expanded. `vsmm` refuses to run if it doesn't exist rather than creating a mod tree somewhere else. |
+| `data_dir` | `~/.config/vsmm` | Package cache and exports. In the container, `/config/vsmm`, so it survives recreation. |
+| `log_level` | `error` | `error`, `warn`, `info`, `debug`, or `trace`. |
+| `track_latest` | `false` | Ignore versions named by lists and keep everything on its latest. See [Version pinning](#version-pinning). |
+| `[sources] enabled` | `["thunderstore"]` | Which mod sources to use, in tie-break order. Add `"hexium"` to use [Hexium](https://valheim.hexium.gg) too. |
+| `[gale_sync] profile_id` | unset | The Gale profile sync id `vsmm sync` follows. Unset disables it. Reading a profile needs no token, so none is stored. |
+| `[gale_sync] base_url` | `https://gale.kesomannen.com/api` | The gale-sync API root. |
 
-If neither exists, a default config is created at the global location on first run.
+## Version pinning
 
-You can also specify a config file directly with the `--config` flag, which bypasses the above lookup entirely.
+Gale profiles (and `.r2z` files, profile codes, and r2modman `mods.yml` files) name a version for every mod, dependencies included. By default `vsmm` respects them:
 
-The config file supports the following settings:
+- `import` and `sync` install each mod at its listed version and remember it as a **pin**.
+- `update mods` keeps pinned mods at their pinned version and moves everything else to latest.
+- `vsmm install X` by hand installs X at its latest version and drops X's pin. Already-pinned dependencies stay pinned; new ones come in at latest.
+- If a listed version is no longer offered by any configured source, that mod is skipped with a warning and whatever is installed stays as it is.
+- A live Gale profile *directory* records no versions, so it installs latest and pins nothing.
+- If a package is on several sources, the source that has the pinned version wins, even if another is newer.
 
-- `log_level`: Logging verbosity (`error`, `warn`, `info`, `debug`, `trace`)
-- `game_dir`: Your Valheim game folder, the directory holding the game
-  executable, where the mod loader is installed
-- `track_latest`: Optional, default `false`. By default the versions named by
-  an imported list (gale-sync, `.r2z`, profile code, r2modman directory) are
-  respected: each mod is installed at the listed version and `vmm update mods`
-  keeps it there. Set `track_latest = true` to ignore listed versions and keep
-  every mod on its latest. See [Version pinning](#version-pinning).
-- `data_dir`: Optional. Where the package cache and exports live.
-  Defaults to `~/.config/vmm`
-- `[sources] enabled`: Which mod sources to resolve and install from, in
-  priority order. Defaults to `["thunderstore"]`; add `"hexium"` to also pull
-  from [Hexium](https://valheim.hexium.gg):
-  ```toml
-  [sources]
-  enabled = ["thunderstore", "hexium"]
-  ```
-  `vmm search --source hexium` restricts a search to one source for that
-  invocation. See
-  [How Source Resolution Works](#how-source-resolution-works) for exactly how sources are merged, which
-  source a shared mod resolves from, and which client downloads it.
-- `[gale_sync] profile_id`: Optional. The id of a
-  [gale-sync](https://github.com/Kesomannen/gale-sync) profile whose modlist is
-  the desired one. Reading a profile needs no token, so none is stored.
-  Unset disables gale-sync. `base_url` overrides the API root
-  (default `https://gale.kesomannen.com/api`).
-  ```toml
-  [gale_sync]
-  profile_id = "GsioqKpVRwiP7_ynX-QsuA"
-  ```
-  Run `vmm sync` to reconcile against it (see
-  [Syncing with gale-sync](#syncing-with-gale-sync)).
+Set `track_latest = true` to ignore listed versions entirely: nothing is pinned and everything goes to latest.
 
-`game_dir` and `data_dir` both expand a leading `~` and environment variables,
-so `~/valheim` and `$HOME/valheim` are equivalent. A variable that is not
-set is left as written. `vmm` refuses to run rather than installing into a
-`game_dir` that does not exist, so a typo is reported instead of silently
-creating a fresh mod tree somewhere else.
+Auto-updating a modded server unattended can pull in an update that breaks compatibility with your players' clients. Pinning is what keeps the server on the versions your profile says.
 
-Example configuration:
-
-```toml
-log_level = "info"
-game_dir = "/config/vmm_game"
-```
-
-## Usage
-
-### Managing mods
+## Commands
 
 ```bash
-# Install mods and their dependencies
-vmm install denikson-BepInExPack_Valheim ValheimModding-Jotunn
+# Follow the configured Gale profile (install, prune, pin)
+vsmm sync
 
-# List what is installed
-vmm list
-vmm list --format json
+# Install mods and their dependencies (at latest)
+vsmm install denikson-BepInExPack_Valheim ValheimModding-Jotunn
+
+# See what is installed
+vsmm list
+vsmm list --format json
+
+# Update every unpinned mod (pinned mods stay), refresh the package indexes
+vsmm update mods
+vsmm update manifest
 
 # Take a mod out of play without uninstalling it
-vmm disable ValheimModding-Jotunn
-vmm enable ValheimModding-Jotunn
+vsmm disable ValheimModding-Jotunn
+vsmm enable ValheimModding-Jotunn
+vsmm disable --all           # every mod except the loader
 
-# Disable or enable every installed mod at once (the mod loader is left alone)
-vmm disable --all
-vmm enable --all
+# Remove mods
+vsmm uninstall ValheimModding-Jotunn
+vsmm uninstall --force ValheimModding-Jotunn   # also delete unrecorded folders
+vsmm uninstall --all [--yes]                   # everything, loader included
 
-# Remove a mod, its files, and its tracked state
-vmm uninstall ValheimModding-Jotunn
+# Search every configured source (or one)
+vsmm search jotunn
+vsmm search --source hexium jotunn
 
-# Remove it even though unrecorded mod folders are present (deletes those too)
-vmm uninstall --force ValheimModding-Jotunn
+# Import from an .r2z file, a profile code, or a profile directory
+vsmm import ./profile.r2z
+vsmm import a1b2c3d4-0000-0000-0000-000000000000
+vsmm import --additive ./profile.r2z   # keep mods the source no longer names
 
-# Remove every installed mod, including the mod loader, leaving a vanilla install
-vmm uninstall --all
-vmm uninstall --all --yes
-
-# Update every installed mod (pinned mods stay at their pinned version;
-# see Version pinning)
-vmm update mods
-
-# Refresh the cached package index (every configured source)
-vmm update manifest
-
-# Search every configured source
-vmm search jotunn
-
-# Restrict a search to one source
-vmm search --source hexium jotunn
+# Share what is installed
+vsmm export            # writes an .r2z under data_dir
+vsmm export --code     # uploads and prints a profile code
 ```
 
-`vmm enable --all` and `vmm disable --all` apply to every mod recorded in the
-current target's `mods.yml`; the mod loader is left out of the batch, since it
-has no disabled state. A mod already in the requested state is counted
-separately as unchanged rather than as a failure. If one mod's toggle fails,
-the rest of the batch still applies and `vmm` exits non-zero, naming what
-failed.
+**Importing is authoritative.** After installing, a file or profile-code import (and `sync`) uninstalls anything the source no longer names, so the server converges on the source. Use `--additive` to only add. Directory imports (r2modman or Gale profile folders) are a raw copy and never prune. `vsmm` also refuses to prune against a source that names no mods, since that would uninstall everything, the mod loader included.
 
-`vmm update mods` reinstalls every recorded mod on every run, not only when a
-mod's version changes. That overwrites any file a mod packages inside its own
-folder under `BepInEx/plugins/`, including hand edits you've made to those
-files. Files you place directly under `BepInEx/config/` are left alone if they
-already exist. Mods you have disabled stay disabled.
+**`mods.yml` owns the whole mod tree.** An uninstall reconciles every `Owner-ModName` folder under the install routes against `mods.yml`, so a folder you dropped in by hand would be removed too. `vsmm uninstall` therefore checks first: if it finds folders `mods.yml` doesn't record, it names them and refuses. Bring them under management with `vsmm install`, or pass `--force` to delete them along with the named mods. Loader folders such as `BepInEx/plugins/MMHOOK` and anything directly under `BepInEx/config/` are never touched.
 
-#### `mods.yml` owns the whole mod tree
+**`update mods` reinstalls everything it manages** on every run, so any file a mod ships inside its own plugin folder is overwritten, including hand edits to it. Config files placed directly under `BepInEx/config/` are left alone. Mods you disabled stay disabled.
 
-`mods.yml` is authoritative over every per-mod folder under the install routes
-(`BepInEx/plugins/<Owner-ModName>/` and the other namespaced routes), not just
-over the mods `vmm` happens to have installed. An uninstall reconciles that whole
-tree against `mods.yml`, so **any `<Owner-ModName>` folder it does not record can
-be removed by an uninstall**, including mods you installed by hand, mods
-r2modman put there. In `game_dir` mode that tree is your live game directory.
+## Under the hood
 
-`vmm uninstall` therefore checks first: if it finds mod folders `mods.yml` does
-not record, it names them and refuses without changing anything. Bring them under
-management (`vmm install <Owner-ModName>`), or re-run with `--force` to remove the named mods and accept that
-those folders go too. Folders that are not `<Owner-ModName>`-shaped, such as
-loader directories like `BepInEx/plugins/MMHOOK` and anything directly under
-`BepInEx/config/`, are never touched.
+### Where mods come from
 
-`vmm uninstall --all` removes every mod recorded for the current target,
-including the mod loader, leaving a vanilla install; files under
-`BepInEx/config` are left alone regardless. It asks for confirmation before
-removing anything, listing what will go, and `--yes` skips that prompt. With no
-terminal available and no `--yes`, it refuses rather than assuming an answer.
+With more than one source configured, `vsmm` merges their package indexes into one before resolving anything:
 
-Untracked mod folders are handled a little differently here than for a
-single-mod uninstall: the confirmation prompt lists them too, so accepting it
-covers them without needing `--force`. `--yes` skips that same prompt, though,
-so on that path `--force` is still required to accept those folders being
-removed alongside everything else.
+1. Each source's index is fetched and cached under `data_dir`.
+2. When the same package (`Owner-ModName`) exists on several sources, the one with the later `date_updated` wins. The order of `enabled` only breaks exact ties. A mod on only one source is unaffected. Pins change this rule slightly: a source that offers the pinned version beats one that does not.
+3. The full dependency closure of what you asked for is resolved against that one merged index.
+4. Packages are downloaded and extracted into a shared cache, then installed using the mod loader's install rules.
 
-### Sharing
+This is why Hexium-only mods work everywhere `vsmm` names a mod: install, update, and every import route. `vsmm search --source` only filters what is displayed; it doesn't change how a mod resolves.
 
-```bash
-# Write an .r2z into <data_dir>/valheim/exports/
-vmm export
+### Files vsmm keeps
 
-# Upload and print a shareable Thunderstore profile code
-vmm export --code
+Inside `game_dir`:
 
-# Import from a file, a profile code, an r2modman profile directory, or a
-# live Gale profile directory
-vmm import ./default_1753488000.r2z
-vmm import a1b2c3d4-0000-0000-0000-000000000000
-vmm import ~/.config/r2modmanPlus-local/Valheim/profiles/Default
-vmm import ~/.local/share/gale/valheim/profiles/Default
+- **`mods.yml`** is the record of what is installed. It uses the r2modman/Gale-compatible format, one entry per mod with its version, dependencies, and enabled state. The engine owns and rewrites it; it is what `list`, `uninstall`, `enable`/`disable`, and `export` read.
+- **`.vsmm_state.json`** holds what `mods.yml` has no room for: where each mod came from, and the version it is pinned to.
 
-# Only add: keep mods the re-imported source no longer names, instead of
-# uninstalling them (file or code sources only, see below)
-vmm import --additive ./default_1753488000.r2z
-```
+  ```json
+  {
+    "Advize-PlantEverything": { "source": "thunderstore", "pin": "1.21.2" },
+    "Azumatt-AAA_Crafting":   { "source": "hexium",      "pin": "2.1.10" }
+  }
+  ```
 
-A file or profile-code import installs each mod at the version the list names
-(see [Version pinning](#version-pinning)) and prints what it installed. Every mod it names is resolved through the same multi-source merge
-`install` uses (see [How It Works](#how-it-works)), so a mod that only exists
-on a non-default configured source (e.g. Hexium) is still found, even though
-neither `.r2z` files nor profile codes have any field to record which source
-a mod was originally installed from.
+  A mod with no `pin` tracks latest. Entries disappear when their mod is uninstalled.
 
-A profile code is fetched from Thunderstore's `legacyprofile` endpoint by
-default. Gale uploads a profile to Hexium's identical endpoint instead when
-it contains a Hexium-exclusive mod, and warns that the code only works in
-Gale. That warning does not apply to vmm: when `hexium` is a configured
-source, `vmm import` checks Hexium's endpoint first and falls back to
-Thunderstore if the code is not found there.
+Inside `data_dir/valheim/`: the downloaded package cache and `.r2z` exports.
 
-Importing an r2modman profile directory (one with a `mods.yml`) adopts it
-as-is at the versions the source recorded, and downloads nothing, with one
-exception: if the adopted `mods.yml` names a mod loader, the loader is
-reinstalled afterward (at the version the `mods.yml` recorded, resolved
-through that same multi-source merge) so it gains the install record that
-makes it manageable and removable; a source naming no loader stays fully
-offline. It is also a raw copy with no pre-clean: if the destination already
-has different mods installed, `mods.yml` is overwritten while the previous
-mods' files stay on disk, now untracked and orphaned. Import into an empty
-target, or accept that leftover.
+### The Docker integration
 
-**Gale** keeps its live profile state in SQLite rather than a per-profile
-`mods.yml`, so a live Gale profile directory has mod files on disk but no
-record. Importing one is recognized automatically (a directory with no
-`mods.yml`) and, unlike an r2modman directory, reinstalls **every** mod it
-finds from the configured source(s) rather than merely copying files, since
-nothing can attribute a copied file to a specific mod by shape. Every mod
-therefore lands at its latest version, since a Gale directory records no
-versions to pin, and each is recorded in the `.vmm_state.json` sidecar with whichever
-source actually supplied it. A Gale-exported `.r2z` file or shared profile
-code, by contrast, already works today unchanged through the ordinary file/code
-import path above; only a *live* Gale profile directory needs this route.
-
-### Reconciling a shrinking export
-
-A file or profile-code import is authoritative by default: after installing,
-it also uninstalls anything the target has that the source no longer names, so
-re-importing a shared profile makes the target converge on it rather than only
-ever growing. Pass `--additive` to keep the old mods instead (for example to
-try a profile locally without disturbing what is already installed):
-
-```bash
-vmm import a1b2c3d4-0000-0000-0000-000000000000
-vmm import --additive a1b2c3d4-0000-0000-0000-000000000000
-```
-
-Directory imports (Gale or r2modman alike) never reconcile: they are a raw
-copy of whatever is on disk, so the default does not apply to them. A stale mod
-that cannot be removed exactly (for example, a mod loader adopted from a
-directory with no install record) is reported and left in place rather than
-failing the whole run; anything else stale is still removed.
-
-### Version pinning
-
-Lists carry a version for every mod (an `.r2z` or profile code's `export.r2x`,
-a gale-sync profile, or an r2modman directory's `mods.yml`; dependencies are
-listed like any other mod). By default vmm respects them:
-
-- `import` and `sync` install each mod at its listed version and remember it in
-  `.vmm_state.json` next to `mods.yml`.
-- `update mods` keeps pinned mods at their pinned version and moves everything
-  else to latest.
-- `vmm install X` by hand installs X at its latest version and drops X's pin.
-  X's dependencies that are already pinned stay pinned; new ones come in at
-  latest.
-- If a listed version is no longer offered by any configured source, that mod
-  is skipped with a warning and whatever is installed stays as it is.
-- A live Gale profile directory records no versions, so it installs latest and
-  pins nothing.
-- When the same package is on several sources, a source that has the pinned
-  version wins over one that is merely newer.
-
-Set `track_latest = true` in the config to ignore listed versions entirely:
-nothing is pinned and everything goes to latest, as before.
-
-### Syncing with gale-sync
-
-With `[gale_sync] profile_id` set, `vmm sync` fetches that profile and
-reconciles the target against it exactly like a pruning import. If gale-sync
-cannot be reached (or no profile is configured) it fails before touching
-anything. `scripts/vmm-update-and-restart.sh` runs it on every cycle and
-tolerates that failure, keeping the installed mods, then restarts the server
-if the mod list changed.
-
-## Global Options
-
-### `--config <path>`
-
-Override the config file location, bypassing the local/global lookup:
-
-```bash
-vmm --config /path/to/my/vmm_config.toml update mods
-```
-
-Downloads and cached data always go to `data_dir` (or `~/.config/vmm` if unset)
-regardless of which config file is used. Respects `$XDG_CONFIG_HOME` when
-`data_dir` is not set.
-
-## How Source Resolution Works
-
-1. Resolves the target to operate on: `game_dir`
-2. Fetches each configured source's package index (`[sources] enabled`,
-   `["thunderstore"]` unless you've opted into `"hexium"` too), caching each
-   one under `data_dir`, keyed by that source's own URL so multiple sources'
-   caches never collide
-3. **Merges every source's index into one**, walking sources in the order
-   `enabled` lists them:
-   - The first time a mod's full name (e.g. `Owner-ModName`) is seen, coming
-     from any source, it's added to the merged index tagged with that source.
-   - If the same full name turns up again from a later source, its
-     `date_updated` is compared against what's already in the merged index: a
-     **strictly newer** timestamp replaces the entry (and its source tag);
-     an equal or older one is dropped, leaving whichever source already had
-     it. A mod that exists on only one source is unaffected either way.
-   - Net effect: the most recently updated copy of a shared mod always wins,
-     and `enabled`'s order matters only as a **tie-break**; when two sources
-     report the exact same `date_updated` for the same mod, whichever is
-     listed earlier in `enabled` keeps its copy.
-   - `vmm search --source hexium <term>` only filters which catalogs are
-     queried and displayed; it does not change how a mod is resolved.
-4. Resolves the full dependency closure for the requested mods against that
-   one merged index. Dependency resolution itself has no notion of more than
-   one source; the merge in step 3 is the only thing multi-source changes
-5. Downloads and extracts each resolved package into the shared package
-   cache, skipping anything already fetched at the required version. Every
-   download goes through the **first-configured source's** HTTP client
-   (`enabled[0]`) regardless of which source the package actually resolved
-   from: a download is a plain request against the URL in that package's own
-   manifest entry, not one scoped to the client's own host, so any configured
-   source's client can fetch a file that resolved from any other
-6. Installs each package into the target using the mod loader's install
-   rules, records it in the target's `mods.yml`, and records which source it
-   actually resolved from in `.vmm_state.json`, a sidecar next to
-   `mods.yml` (whose r2modman-compatible schema has no field of its own for
-   this; it also holds version pins) — written even with only `"thunderstore"` configured, not just once
-   a second source is added. `vmm list --format json` reports it per mod, and
-   `vmm uninstall` prunes an entry once its mod is gone; a mod with no
-   sidecar entry (installed before this sidecar existed) is reported as
-   `thunderstore`
-
-Steps 2 onward back every command that resolves mod names by full name:
-`install`, `update`, `search`, and all three `import` routes (a file, a
-profile code, or a directory). That last one matters because none of those
-profile interchange formats carry a per-mod source field, so importing a
-profile can never literally restore "the source a mod originally came from,"
-there is nothing recorded to restore. What it does instead is resolve every
-mod the import names through this same merged-index pipeline, so a mod that
-only exists on a non-default source (e.g. Hexium) is found and installed
-rather than failing simply because only the default source was ever checked.
-
-## Directory Structure
-
-- `data_dir` (or `~/.config/vmm` if unset, respecting `$XDG_CONFIG_HOME`):
-  holds the downloaded package cache, `.r2z` exports,
-  under `data_dir/valheim/`
-- Your target directory (`game_dir`) holds the installed mod files,
-  `mods.yml`, any loader state, and `.vmm_state.json`, recording which
-  source each mod came from and which version it is pinned to (see [How It Works](#how-it-works))
-
-## Adding vmm to the official community Docker image
-
-This section covers wiring `vmm` into
-[`ghcr.io/community-valheim-tools/valheim-server`](https://github.com/community-valheim-tools/valheim-server-docker),
-a community-maintained Valheim dedicated server image, so a running server
-container keeps its mods up to date on its own schedule. It needs no custom
-image or Dockerfile: the image already exposes documented `*_HOOK` environment
-variables that block startup or its update loop until a given shell command
-returns, and that hook surface is everything this integration uses.
-
-`thunderstore-engine` (vmm's backing crate) always installs relative to
-`game_dir` using a fixed shape: `<game_dir>/BepInEx/{plugins,config,
-patchers}`. Neither of the image's own BepInEx paths is that shape.
-`/opt/valheim/bepinex` is real-shaped (`BepInEx/plugins` etc. as siblings),
-but it is the image's live, ephemeral install. `bepinex-updater` rebuilds it
-from scratch (a fresh `rsync` into a `.tmp` directory, then swap) on every
-Valheim server update and every BepInEx pack update, so anything `vmm` wrote
-directly there would be wiped the next time either happens. `/config/bepinex`
-is the image's actual persistent volume and survives that, but it is
-flattened: `plugins/` and `patchers/` sit directly under it with no nested
-`BepInEx/` segment. The image's own `bepinex-updater` copies its contents
-into the live install on every boot and every update
-(`sync_bepinex_loadables` in the image's `common` script), and that copy is
-what actually keeps mods loaded across updates. This integration uses that
-same mechanism instead of duplicating it.
-
-So `game_dir` points at a small directory `vmm` owns exclusively,
-`/config/vmm_game`, whose `BepInEx/` subfolders are symlinks into
-`/config/bepinex`:
+The engine always installs into `<game_dir>/BepInEx/{plugins,config,patchers}`, and neither of the image's own BepInEx paths has that shape. `/opt/valheim/bepinex` is the image's live install, rebuilt from scratch on every game or BepInEx update, so anything written there would be wiped. `/config/bepinex` is the persistent volume but is flattened (`plugins/` directly under it). So `game_dir` points at a small directory `vsmm` owns, `/config/vsmm_game`, whose `BepInEx/` folders are symlinks:
 
 ```
-/config/vmm_game/BepInEx/plugins  -> /config/bepinex/plugins
-/config/vmm_game/BepInEx/patchers -> /config/bepinex/patchers
-/config/vmm_game/BepInEx/config   -> /config/bepinex
+/config/vsmm_game/BepInEx/plugins  -> /config/bepinex/plugins
+/config/vsmm_game/BepInEx/patchers -> /config/bepinex/patchers
+/config/vsmm_game/BepInEx/config   -> /config/bepinex
 ```
 
-[`scripts/vmm-update-and-restart.sh`](scripts/vmm-update-and-restart.sh)
-creates these on every run, idempotently, so there is no separate setup
-step. `vmm` then writes through them exactly as it would into an ordinary
-game directory, but every file actually lands in `/config/bepinex`, the same
-directory the image's own docs tell you to drop plugins into by hand, and
-the same directory `bepinex-updater` already knows how to sync into the live
-install. Mods placed there by hand, before or alongside `vmm`, are picked up
-by the same sync; `vmm` just won't know about them (they carry no `mods.yml`
-entry, so `vmm list`/`vmm uninstall` won't see them). A mod's own `.cfg`,
-written the first time it runs, lands directly in `/config/bepinex/` (the
-`BepInEx/config` symlink points at `/config/bepinex` itself, not a subfolder
-of it). That is where to look to hand-edit a mod's settings.
+The hook script (re)creates these on every run. `vsmm` writes through them as if they were an ordinary game directory, and everything lands in `/config/bepinex`: the same folder the image tells you to put mods in by hand. A mod's own `.cfg` file, written the first time it runs, lands directly in `/config/bepinex/`, which is where to look to edit its settings.
 
-This does not cover every install route `thunderstore-engine` knows about.
-`BepInEx/core` (the loader itself) and `BepInEx/monomod` (MonoMod hook DLLs)
-are not symlinked, because the image's own sync only ever copies `plugins/`
-and `patchers/`. See step 4 of the setup below, "Limits of this approach".
+The image copies `/config/bepinex` into the live install only at container boot and during its own BepInEx updates, not when the game server process restarts. So before restarting, the hook script runs the image's own `sync_bepinex_loadables`. Without it, removed mods would stay loaded and version changes would never apply. The sync deletes a removed mod's files but leaves its empty folder in the live install, which is harmless.
 
-### Setup
+**Limits.**
 
-1. **`vmm_config.toml`**, committed or mounted at `/config/vmm_config.toml`:
-
-   ```toml
-   game_dir = "/config/vmm_game"
-   data_dir = "/config/vmm"
-
-   [sources]
-   enabled = ["hexium", "thunderstore"]
-   ```
-
-   Both live under `/config` so the package cache, `mods.yml`, and (via the
-   symlinks described above) the mods themselves all survive container
-   recreation. `game_dir` is the shim directory, not either of the image's
-   own BepInEx paths (see above). This uses only the current schema,
-   `game_dir` and `data_dir`, not the `install_dir`/`cache_dir` keys some other
-   integrations write, which would be a schema mismatch against this version
-   of `vmm`. List `hexium` first if you use
-   it: a Gale-exported profile code for a Hexium-inclusive profile is hosted
-   on Hexium's endpoint, and `vmm import` tries sources in this order (see
-   [Sharing](#sharing)).
-
-2. **Environment variables**, added to the image's `docker run`/compose.
-   This has to happen before step 3: `vmm` is not on the container's `PATH`
-   until `POST_BOOTSTRAP_HOOK` puts it there, and that only runs when the
-   container is created or restarted.
-
-   ```bash
-   -e BEPINEX=true \
-   -e POST_BOOTSTRAP_HOOK='curl --proto "=https" --tlsv1.2 -LsSf <vmm-release-url>/valheim-mod-manager-installer.sh | VALHEIM_MOD_MANAGER_INSTALL_DIR=/usr/local/bin sh && curl --proto "=https" --tlsv1.2 -LsSf https://raw.githubusercontent.com/<your-fork>/valheim-mod-manager/master/scripts/vmm-update-and-restart.sh -o /usr/local/bin/vmm-update-and-restart.sh && chmod +x /usr/local/bin/vmm-update-and-restart.sh' \
-   -e POST_UPDATE_CHECK_HOOK='/usr/local/bin/vmm-update-and-restart.sh'
-   ```
-
-   `POST_BOOTSTRAP_HOOK` runs once after bootstrap, before any service
-   starts. The first `curl` fetches vmm's own prebuilt static binary onto
-   the container's `PATH` using its cargo-dist installer script; no compiler
-   needed in the image. The second `curl` fetches
-   [`scripts/vmm-update-and-restart.sh`](scripts/vmm-update-and-restart.sh)
-   from the repo and installs it alongside `vmm`. Both run on every
-   bootstrap, so there is no separate manual copy step and nothing to keep
-   in sync with the persistent `/config` volume; if you'd rather not depend
-   on a network fetch for the script, copy it onto `/config` yourself instead
-   and point `POST_UPDATE_CHECK_HOOK` at that path.
-
-   `POST_UPDATE_CHECK_HOOK` runs on the image's existing `valheim-updater`
-   schedule (`UPDATE_CRON`, default `*/15 * * * *`). The script first creates
-   `game_dir`'s `BepInEx/{plugins,patchers,config}` symlinks into
-   `/config/bepinex` if they are missing or wrong (idempotent, so this costs
-   nothing on ordinary runs), then runs `vmm update manifest && vmm
-   update mods`, then, if something actually changed, runs the image's own
-   `sync_bepinex_loadables` to copy `/config/bepinex` into the live install
-   and restarts the `valheim-server` process via `supervisorctl`. The sync
-   matters: the image only does that copy at container boot and during its own
-   BepInEx updates, so a bare server restart would come back up on the old
-   mods (removed mods stay loaded, version changes never apply). It compares `vmm list
-   --format json` before and after, trimmed to the JSON payload itself:
-   `vmm`'s own tracing output goes to stdout too and is timestamped, so a
-   raw capture would report a change on every run.
-
-3. **Install your mods once against the container.** The BepInEx install and
-   everything inside it is root-owned, and every process that touches it
-   (SteamCMD, `valheim-updater`, the game server itself) runs as root inside
-   the container, so `vmm` has to run there too, not from the host against
-   the bind-mounted directory. Use `docker exec` to run it, or `docker exec
-   -it valheim-server sh` to open a shell and run it directly from there:
-
-   ```bash
-   docker exec -i valheim-server vmm --config /config/vmm_config.toml import \
-     a1b2c3d4-0000-0000-0000-000000000000
-   # or a file export
-   docker exec -i valheim-server vmm --config /config/vmm_config.toml import \
-     /path/to/exported.r2z
-   # or naming mods directly
-   docker exec -i valheim-server vmm --config /config/vmm_config.toml install \
-     Owner-Mod1 Owner-Mod2
-   ```
-
-   This is the same imperative, `mods.yml`-backed install flow as a local
-   `vmm install`/`vmm import`; nothing Docker-specific about it. A mod that
-   exists only on Hexium resolves automatically once `hexium` is in
-   `[sources] enabled`. If you're migrating
-   mods that were previously placed by hand, `install` puts each one at its
-   **latest** version, not whatever was there before; check your old versions
-   first if any were intentionally held back. Restart once
-   afterward to confirm the server loads cleanly from `vmm`'s install.
-
-4. **Limits of this approach.**
-
-     Every mod that depends on the BepInEx loader re-triggers the loader's
-     own dependency resolution on every `update mods` run, so `vmm` reinstalls
-     it into `game_dir` alongside the mods that need it. `BepInEx/core` is
-     not one of the symlinked routes, though, so that copy lands in
-     `/config/vmm_game/BepInEx/core` and never reaches the image's live
-     install. This is expected: `BEPINEX=true` already fully owns installing
-     and updating the actual loader (it's what sets up the doorstop
-     `LD_PRELOAD` hook, so it cannot be turned off), so `vmm`'s copy is left
-     inert on purpose rather than competing with it for writes to the same
-     live location.
-
-     `BepInEx/monomod` (MonoMod hook DLLs, used by a small minority of mods)
-     is not symlinked either, for a different reason: the image's own sync
-     only ever copies `plugins/` and `patchers/` out of `/config/bepinex`.
-     Even a mod placed there entirely by hand, with no `vmm` involved, would
-     not reach the live install. This is a pre-existing limitation of the
-     image itself. It is not something this integration introduces, and it
-     cannot be worked around without symlinking a folder the image's own
-     sync never reads.
+- `BepInEx/core` (the loader itself) is not symlinked. Mods that depend on the loader make `vsmm` reinstall it into `game_dir`, and that copy stays in `/config/vsmm_game/BepInEx/core` and never reaches the live install. This is intentional: `BEPINEX=true` owns installing and updating the real loader, so `vsmm`'s copy is left inert rather than competing with it.
+- `BepInEx/monomod` (MonoMod hook DLLs, used by a few mods) is not symlinked either. The image's sync only copies `plugins/` and `patchers/`, so even a hand-placed file there would not reach the live install. This is a limitation of the image, not something the integration adds.
+- Dependencies a list doesn't name are not pinned, because the engine has no version-constraint solving. They resolve to latest. Gale and r2modman lists include every dependency, so this only affects hand-written lists.
 
 ## Troubleshooting
 
-If you encounter issues, increase log verbosity in your config:
+To see what `vsmm` is doing, run it once with a debug config. Don't change the container's own config for this (see below):
 
-```toml
-log_level = "debug"
+```bash
+docker exec -i valheim sh -c 'printf "log_level = \"debug\"\n" > /tmp/vsmm_debug.toml; grep -v "^log_level" /config/vsmm_config.toml >> /tmp/vsmm_debug.toml; vsmm --config /tmp/vsmm_debug.toml sync'
 ```
 
-Then run the command again to see more detailed output.
+**Do not leave `log_level` at `info` or lower in the container config.** At `info`, each run prints about 1,300 lines about which source won for each shared mod. In testing, running that on a schedule backed up the image's `supervisord`/`syslogd` output until `supervisorctl` hung. The game server kept running, but supervision didn't. The default (`error`) is what the container should use.
+
+**A mod I removed from the profile is still loaded.** Check that the hook ran the live sync: the script logs "syncing them into the live install" whenever mods changed. If you're running an older copy of the script, restart the container so the boot hook fetches the current one.
+
+**A mod is skipped with "pinned to X but no configured source offers it".** The version your profile names is gone from every source in `[sources] enabled`. The installed version is left alone. Either update the profile, or set `track_latest = true`.
+
+## Building from source
+
+```bash
+git clone https://github.com/Dwarf1er/valheim-server-mod-manager.git
+cd valheim-server-mod-manager
+cargo build --release      # binary at target/release/vsmm
+cargo test
+```
+
+Requires Rust 1.94 or newer. Release builds are produced by [cargo-dist](https://opensource.axo.dev/cargo-dist/) when a version tag is pushed.
+
+## Acknowlegements
+
+- [Endoze/valheim-mod-manager](https://github.com/Endoze/valheim-mod-manager), the project this was forked from, and [thunderstore-engine](https://github.com/Endoze/thunderstore-engine), the library that does the installing.
+- [Gale](https://gale.kesomannen.com/) and [gale-sync](https://github.com/Kesomannen/gale-sync) for the profile sync this is built around.
+- [Thunderstore](https://thunderstore.io) and [Hexium](https://valheim.hexium.gg) for hosting Valheim mods.
+- [community-valheim-tools/valheim-server-docker](https://github.com/community-valheim-tools/valheim-server-docker) for the server image.
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Acknowledgments
-
-- [Thunderstore](https://thunderstore.io) for hosting Valheim mods
-- [Hexium](https://hexium.gg) for hosting Valheim mods
-- The amazing Valheim modding community
+This software is licensed under the [MIT license](LICENSE).

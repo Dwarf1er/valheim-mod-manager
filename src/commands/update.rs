@@ -108,14 +108,14 @@ pub async fn run_mods_with_sources(
 /// recorded to reinstall.
 fn report_nothing_installed(target: &Target) -> AppResult<()> {
   println!(
-    "vmm: {}",
+    "vsmm: {}",
     crate::error::advice_message(
       &format!(
         "there is nothing installed in {}.",
         crate::target::describe(target)
       ),
       "Nothing was changed.",
-      &["vmm install <Owner-ModName>"],
+      &["vsmm install <Owner-ModName>"],
     )
   );
 
