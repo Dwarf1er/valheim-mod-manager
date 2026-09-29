@@ -58,7 +58,7 @@ pub fn run(eco: &Ecosystem, target: &Target, mods: &[String], force: bool) -> Ap
   super::report_batch_failures(&outcome)
 }
 
-/// Drops the `.vmm_sources.json` sidecar's entries for anything no longer in
+/// Drops the `.vmm_state.json` sidecar's entries for anything no longer in
 /// `mods.yml`, so it never outlives what is actually installed. Called after
 /// every uninstall that ran (even a partial one, since `succeeded` items are
 /// genuinely gone either way).

@@ -232,7 +232,7 @@ record. Importing one is recognized automatically (a directory with no
 finds from the configured source(s) rather than merely copying files, since
 nothing can attribute a copied file to a specific mod by shape. Every mod
 therefore lands at its latest version, since a Gale directory records no
-versions to pin, and each is recorded in the `.vmm_sources.json` sidecar with whichever
+versions to pin, and each is recorded in the `.vmm_state.json` sidecar with whichever
 source actually supplied it. A Gale-exported `.r2z` file or shared profile
 code, by contrast, already works today unchanged through the ordinary file/code
 import path above; only a *live* Gale profile directory needs this route.
@@ -263,7 +263,7 @@ a gale-sync profile, or an r2modman directory's `mods.yml`; dependencies are
 listed like any other mod). By default vmm respects them:
 
 - `import` and `sync` install each mod at its listed version and remember it in
-  `.vmm_pins.json` next to `mods.yml`.
+  `.vmm_state.json` next to `mods.yml`.
 - `update mods` keeps pinned mods at their pinned version and moves everything
   else to latest.
 - `vmm install X` by hand installs X at its latest version and drops X's pin.
@@ -336,9 +336,9 @@ regardless of which config file is used. Respects `$XDG_CONFIG_HOME` when
    source's client can fetch a file that resolved from any other
 6. Installs each package into the target using the mod loader's install
    rules, records it in the target's `mods.yml`, and records which source it
-   actually resolved from in `.vmm_sources.json`, a sidecar next to
+   actually resolved from in `.vmm_state.json`, a sidecar next to
    `mods.yml` (whose r2modman-compatible schema has no field of its own for
-   this) — written even with only `"thunderstore"` configured, not just once
+   this; it also holds version pins) — written even with only `"thunderstore"` configured, not just once
    a second source is added. `vmm list --format json` reports it per mod, and
    `vmm uninstall` prunes an entry once its mod is gone; a mod with no
    sidecar entry (installed before this sidecar existed) is reported as
@@ -360,8 +360,8 @@ rather than failing simply because only the default source was ever checked.
   holds the downloaded package cache, `.r2z` exports,
   under `data_dir/valheim/`
 - Your target directory (`game_dir`) holds the installed mod files,
-  `mods.yml`, any loader state, and `.vmm_sources.json`, recording which
-  source each mod came from (see [How It Works](#how-it-works))
+  `mods.yml`, any loader state, and `.vmm_state.json`, recording which
+  source each mod came from and which version it is pinned to (see [How It Works](#how-it-works))
 
 ## Adding vmm to the official community Docker image
 

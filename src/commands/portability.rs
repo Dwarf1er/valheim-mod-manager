@@ -96,7 +96,7 @@ pub async fn import(
 ///
 /// A list source (`.r2z`, profile code, r2modman directory) names a version for
 /// every mod. By default each is installed at exactly that version and
-/// remembered as a pin (see [`crate::sources::pins_file`]) so `update mods`
+/// remembered as a pin (see [`crate::sources::state_file`]) so `update mods`
 /// keeps it there; a pinned version no source offers is skipped with a warning
 /// and the installed one is kept. With `track_latest` nothing is pinned and
 /// everything goes to latest. A live Gale directory names no versions, so it
@@ -154,7 +154,7 @@ fn note_latest_versions(track_latest: bool) {
 /// resolved from during this import — the newly-resolved source
 /// [`crate::sources::merged_manifest`] picked, not anything preserved from the
 /// profile being imported (the interchange formats have no room for that; see
-/// [`crate::sources::sources_file`]'s module docs).
+/// [`crate::sources::state_file`]'s module docs).
 fn record_resolved_sources(
   target: &Target,
   installed: &[String],

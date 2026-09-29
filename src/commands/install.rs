@@ -44,7 +44,7 @@ pub async fn run(
 /// layer is not scoped to a client's own `base_url`.
 ///
 /// Records which source each succeeded mod came from in the target's
-/// `.vmm_sources.json` sidecar.
+/// `.vmm_state.json` sidecar.
 ///
 /// Installs the named mods at their latest version. Mods pinned by an earlier
 /// list import keep their pinned version unless `track_latest` is set.

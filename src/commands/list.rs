@@ -7,7 +7,7 @@ use thunderstore_engine::profile::modlist::ProfileMod;
 
 /// Renders the installed mods, sorted by identifier.
 ///
-/// `sources` is the target's `.vmm_sources.json` sidecar (see
+/// `sources` is the target's `.vmm_state.json` sidecar (see
 /// [`crate::sources::read_sources`]); an entry it does not name — an old
 /// sidecar, or a mod adopted before Hexium support existed — is reported as
 /// `thunderstore`, since that was the only source before the sidecar existed.

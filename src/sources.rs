@@ -24,8 +24,8 @@
 //!
 //! `mods.yml`'s schema is the engine's own and has no room for "which source did
 //! this come from", so that attribution is tracked in a sidecar file,
-//! `.vmm_sources.json`, next to it (see
-//! [`sources_file`](crate::sources::sources_file)).
+//! `.vmm_state.json`, next to it (see
+//! [`state_file`](crate::sources::state_file)), which also holds version pins.
 
 use crate::error::{AppError, AppResult};
 use crate::target::Target;
@@ -455,38 +455,88 @@ pub fn warn_unavailable_pins(missing: &[String], pins: &HashMap<String, String>)
   }
 }
 
-/// The sidecar file recording which source each installed mod came from.
+/// What vmm remembers about one installed mod that `mods.yml` has no room for.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct ModState {
+  /// Which configured source the mod was last resolved from. Informational.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  source: Option<SourceId>,
+  /// The version a list asked for, held across `update mods`; absent means
+  /// "track latest".
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pin: Option<String>,
+}
+
+/// The sidecar recording, per installed mod, where it came from and which
+/// version (if any) it is pinned to.
 ///
-/// `mods.yml`'s schema is the engine's own (kept r2modman/Gale-compatible), so
-/// there is no room in it for a source other than the implicit "Thunderstore"
-/// every reader already assumes. This lives beside it instead, and is treated
-/// the same way vmm treats every other record: missing reads as empty.
-pub fn sources_file(target: &Target) -> PathBuf {
-  target.dir.join(".vmm_sources.json")
+/// `mods.yml`'s schema is the engine's own (kept r2modman/Gale-compatible) and
+/// the engine rewrites each entry wholesale, so there is no room in it for
+/// either. This lives beside it instead, and is treated the same way vmm treats
+/// every other record: missing or unreadable reads as empty (no source known,
+/// nothing pinned, which fails toward "latest").
+pub fn state_file(target: &Target) -> PathBuf {
+  target.dir.join(".vmm_state.json")
 }
 
-/// Reads the sidecar, defaulting to empty when it is missing or unreadable —
-/// the same "unreadable record reads as empty" convention `config.rs` and
-/// `portability.rs` use, since which source an old install came from is
-/// informational, not load-bearing the way `mods.yml` is.
-pub fn read_sources(target: &Target) -> HashMap<String, SourceId> {
-  let path = sources_file(target);
+/// Reads the state. When there is no `.vmm_state.json` yet, falls back to the
+/// two sidecars it replaced (`.vmm_sources.json` and `.vmm_pins.json`), so an
+/// existing install keeps its records; the next write saves the merged state
+/// and removes them.
+fn read_state(target: &Target) -> HashMap<String, ModState> {
+  if let Ok(contents) = std::fs::read_to_string(state_file(target)) {
+    return serde_json::from_str(&contents).unwrap_or_default();
+  }
 
-  let Ok(contents) = std::fs::read_to_string(&path) else {
-    return HashMap::new();
-  };
+  let mut state: HashMap<String, ModState> = HashMap::new();
 
-  serde_json::from_str(&contents).unwrap_or_default()
+  if let Ok(contents) = std::fs::read_to_string(target.dir.join(LEGACY_SOURCES_FILE))
+    && let Ok(sources) = serde_json::from_str::<HashMap<String, SourceId>>(&contents)
+  {
+    for (name, source) in sources {
+      state.entry(name).or_default().source = Some(source);
+    }
+  }
+
+  if let Ok(contents) = std::fs::read_to_string(target.dir.join(LEGACY_PINS_FILE))
+    && let Ok(pins) = serde_json::from_str::<HashMap<String, String>>(&contents)
+  {
+    for (name, pin) in pins {
+      state.entry(name).or_default().pin = Some(pin);
+    }
+  }
+
+  state
 }
 
-/// Writes the sidecar.
-fn write_sources(target: &Target, sources: &HashMap<String, SourceId>) -> AppResult<()> {
-  let path = sources_file(target);
-  let serialized = serde_json::to_string_pretty(sources)?;
+/// The two files [`state_file`] replaced.
+const LEGACY_SOURCES_FILE: &str = ".vmm_sources.json";
+const LEGACY_PINS_FILE: &str = ".vmm_pins.json";
 
-  std::fs::write(path, serialized)?;
+/// Writes the state (sorted by name, so the file is stable across writes),
+/// dropping entries that hold nothing and retiring the legacy sidecars.
+fn write_state(target: &Target, mut state: HashMap<String, ModState>) -> AppResult<()> {
+  state.retain(|_, entry| *entry != ModState::default());
+
+  let sorted: std::collections::BTreeMap<_, _> = state.into_iter().collect();
+
+  std::fs::write(state_file(target), serde_json::to_string_pretty(&sorted)?)?;
+
+  // Best effort: a leftover legacy file is ignored once the new one exists.
+  for legacy in [LEGACY_SOURCES_FILE, LEGACY_PINS_FILE] {
+    let _ = std::fs::remove_file(target.dir.join(legacy));
+  }
 
   Ok(())
+}
+
+/// Reads where each mod came from, defaulting to empty. Informational, not
+/// load-bearing the way `mods.yml` is.
+pub fn read_sources(target: &Target) -> HashMap<String, SourceId> {
+  read_state(target)
+    .into_iter()
+    .filter_map(|(name, entry)| entry.source.map(|source| (name, source)))
+    .collect()
 }
 
 /// Records where one mod came from.
@@ -496,88 +546,72 @@ pub fn record_source(target: &Target, name: &str, source: SourceId) -> AppResult
 }
 
 /// Records where every one of `entries` came from, merging into whatever the
-/// sidecar already holds.
+/// state already holds.
 pub fn record_sources(
   target: &Target,
   entries: impl IntoIterator<Item = (String, SourceId)>,
 ) -> AppResult<()> {
-  let mut sources = read_sources(target);
+  let mut state = read_state(target);
 
   for (name, source) in entries {
-    sources.insert(name, source);
+    state.entry(name).or_default().source = Some(source);
   }
 
-  write_sources(target, &sources)
+  write_state(target, state)
 }
 
-/// Drops every sidecar entry not in `keep`, so it never outlives what
-/// `mods.yml` records. Called after every successful uninstall.
-///
-/// Also drops the pins of anything no longer kept, for the same reason.
+/// Drops every entry (source and pin alike) not in `keep`, so the state never
+/// outlives what `mods.yml` records. Called after every successful uninstall.
 pub fn prune_sources(target: &Target, keep: &HashSet<String>) -> AppResult<()> {
-  let mut sources = read_sources(target);
+  let mut state = read_state(target);
 
-  sources.retain(|name, _| keep.contains(name));
+  state.retain(|name, _| keep.contains(name));
 
-  write_sources(target, &sources)?;
-
-  let mut pins = read_pins(target);
-
-  if pins.iter().any(|(name, _)| !keep.contains(name)) {
-    pins.retain(|name, _| keep.contains(name));
-    write_pins(target, &pins)?;
-  }
-
-  Ok(())
+  write_state(target, state)
 }
 
-/// The sidecar recording the version each mod is pinned to, from the list it
-/// was last imported or synced from. `mods.yml` records what is installed, not
-/// what a list asked for, so this lives beside it like [`sources_file`].
-pub fn pins_file(target: &Target) -> PathBuf {
-  target.dir.join(".vmm_pins.json")
-}
-
-/// Reads the pins, defaulting to none when the file is missing or unreadable:
-/// no pin only ever means "latest", the safe direction to fail.
+/// Reads the pins (`full_name -> version`), defaulting to none: no pin only
+/// ever means "latest", the safe direction to fail.
 pub fn read_pins(target: &Target) -> HashMap<String, String> {
-  let Ok(contents) = std::fs::read_to_string(pins_file(target)) else {
-    return HashMap::new();
-  };
-
-  serde_json::from_str(&contents).unwrap_or_default()
+  read_state(target)
+    .into_iter()
+    .filter_map(|(name, entry)| entry.pin.map(|pin| (name, pin)))
+    .collect()
 }
 
-fn write_pins(target: &Target, pins: &HashMap<String, String>) -> AppResult<()> {
-  std::fs::write(pins_file(target), serde_json::to_string_pretty(pins)?)?;
-
-  Ok(())
-}
-
-/// Records `entries` (`full_name -> version`), merging into the existing pins.
+/// Records `entries` (`full_name -> version`), merging into the existing state.
 pub fn record_pins(
   target: &Target,
   entries: impl IntoIterator<Item = (String, String)>,
 ) -> AppResult<()> {
-  let mut pins = read_pins(target);
+  let mut state = read_state(target);
 
-  pins.extend(entries);
+  for (name, pin) in entries {
+    state.entry(name).or_default().pin = Some(pin);
+  }
 
-  write_pins(target, &pins)
+  write_state(target, state)
 }
 
 /// Drops the pins of `names`, so an explicit `install` of them goes to latest.
+/// Their recorded sources are kept.
 pub fn remove_pins(target: &Target, names: &[String]) -> AppResult<()> {
-  let mut pins = read_pins(target);
-  let before = pins.len();
+  let mut state = read_state(target);
+  let mut changed = false;
 
-  pins.retain(|name, _| !names.contains(name));
+  for name in names {
+    if let Some(entry) = state.get_mut(name)
+      && entry.pin.take().is_some()
+    {
+      changed = true;
+    }
+  }
 
-  if pins.len() == before {
+  if !changed {
     return Ok(());
   }
 
-  write_pins(target, &pins)
+  write_state(target, state)
 }
 
 #[cfg(test)]
@@ -637,11 +671,88 @@ mod tests {
   }
 
   #[test]
+  fn sources_and_pins_share_one_file_and_are_pruned_together() {
+    let fixture = Fixture::new();
+    let target = fixture.target();
+
+    record_sources(
+      &target,
+      [
+        ("Owner-ModA".to_string(), SourceId::Thunderstore),
+        ("Owner-ModB".to_string(), SourceId::Hexium),
+      ],
+    )
+    .unwrap();
+    record_pins(&target, [("Owner-ModA".to_string(), "1.2.3".to_string())]).unwrap();
+
+    assert_eq!(
+      read_pins(&target).get("Owner-ModA").map(String::as_str),
+      Some("1.2.3")
+    );
+    assert_eq!(read_sources(&target).len(), 2);
+    assert!(!target.dir.join(".vmm_pins.json").exists());
+
+    // Dropping a pin keeps the source; pruning drops both.
+    remove_pins(&target, &["Owner-ModA".to_string()]).unwrap();
+    assert!(read_pins(&target).is_empty());
+    assert_eq!(
+      read_sources(&target).get("Owner-ModA"),
+      Some(&SourceId::Thunderstore)
+    );
+
+    record_pins(&target, [("Owner-ModB".to_string(), "9.9.9".to_string())]).unwrap();
+    prune_sources(&target, &HashSet::from(["Owner-ModA".to_string()])).unwrap();
+    assert!(read_pins(&target).is_empty());
+    assert_eq!(read_sources(&target).len(), 1);
+  }
+
+  #[test]
+  fn the_legacy_sidecars_are_read_and_retired_on_the_first_write() {
+    let fixture = Fixture::new();
+    let target = fixture.target();
+
+    std::fs::write(
+      target.dir.join(".vmm_sources.json"),
+      r#"{"Owner-ModA":"hexium"}"#,
+    )
+    .unwrap();
+    std::fs::write(
+      target.dir.join(".vmm_pins.json"),
+      r#"{"Owner-ModA":"1.0.0"}"#,
+    )
+    .unwrap();
+
+    assert_eq!(
+      read_sources(&target).get("Owner-ModA"),
+      Some(&SourceId::Hexium)
+    );
+    assert_eq!(
+      read_pins(&target).get("Owner-ModA").map(String::as_str),
+      Some("1.0.0")
+    );
+
+    record_sources(
+      &target,
+      [("Owner-ModB".to_string(), SourceId::Thunderstore)],
+    )
+    .unwrap();
+
+    assert!(state_file(&target).exists());
+    assert!(!target.dir.join(".vmm_sources.json").exists());
+    assert!(!target.dir.join(".vmm_pins.json").exists());
+    assert_eq!(read_sources(&target).len(), 2);
+    assert_eq!(
+      read_pins(&target).get("Owner-ModA").map(String::as_str),
+      Some("1.0.0")
+    );
+  }
+
+  #[test]
   fn a_missing_sidecar_reads_as_empty_not_an_error() {
     let fixture = Fixture::new();
     let target = fixture.target();
 
-    assert!(!sources_file(&target).exists());
+    assert!(!state_file(&target).exists());
     assert!(read_sources(&target).is_empty());
   }
 
