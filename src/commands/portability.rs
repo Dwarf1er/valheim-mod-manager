@@ -79,6 +79,7 @@ pub async fn export_code(client: &ThunderstoreClient, target: &Target) -> AppRes
 /// names, so the target converges on the source instead of only ever growing.
 /// It does not apply to a directory source, which is a raw, non-reconciling
 /// copy and ignores it.
+#[cfg_attr(not(test), allow(dead_code))]
 pub async fn import(
   client: &ThunderstoreClient,
   eco: &Ecosystem,
@@ -87,6 +88,28 @@ pub async fn import(
   prune: bool,
   sources: &[Box<dyn ModSource>],
 ) -> AppResult<()> {
+  import_tracking(client, eco, target, source, prune, sources, false).await
+}
+
+/// [`import`], with `track_latest` (the config's root setting) choosing whether
+/// the source's mod versions are respected or ignored in favour of latest.
+///
+/// A list source (`.r2z`, profile code, r2modman directory) names a version for
+/// every mod. By default each is installed at exactly that version and
+/// remembered as a pin (see [`crate::sources::pins_file`]) so `update mods`
+/// keeps it there; a pinned version no source offers is skipped with a warning
+/// and the installed one is kept. With `track_latest` nothing is pinned and
+/// everything goes to latest. A live Gale directory names no versions, so it
+/// installs latest either way.
+pub async fn import_tracking(
+  client: &ThunderstoreClient,
+  eco: &Ecosystem,
+  target: &Target,
+  source: &str,
+  prune: bool,
+  sources: &[Box<dyn ModSource>],
+  track_latest: bool,
+) -> AppResult<()> {
   let classified = ImportSource::classify(source);
 
   if let ImportSource::R2modmanDir(dir) = &classified {
@@ -94,27 +117,37 @@ pub async fn import(
       return import_gale_dir(eco, target, dir, sources).await;
     }
 
-    let adopted = import_r2modman_dir_with_sources(eco, target, dir, sources).await?;
+    let adopted = import_r2modman_dir_with_sources(eco, target, dir, sources, track_latest).await?;
 
     super::report_installed(target, &adopted.adopted)?;
-    report_reinstalled_loaders(&adopted.reinstalled);
+    report_reinstalled_loaders(&adopted.reinstalled, track_latest);
 
     return Ok(());
   }
 
   if prune {
-    return import_with_prune(client, eco, target, &classified, sources).await;
+    return import_with_prune(client, eco, target, &classified, sources, track_latest).await;
   }
 
   let zip_bytes = decode_archive_or_code(client, sources, &classified).await?;
-  let (installed, source_map) = import_zip_with_sources(target, eco, sources, &zip_bytes).await?;
+  let (installed, source_map) =
+    import_zip_with_sources(target, eco, sources, &zip_bytes, track_latest).await?;
 
   super::report_installed(target, &installed)?;
   record_resolved_sources(target, &installed, &source_map)?;
-
-  println!("\nNote: an import installs each mod's latest version, not the exported one.");
+  note_latest_versions(track_latest);
 
   Ok(())
+}
+
+/// Tells the user, only when `track_latest` is why, that the source's versions
+/// were not the ones installed.
+fn note_latest_versions(track_latest: bool) {
+  if track_latest {
+    println!(
+      "\nNote: track_latest is set, so each mod was installed at its latest version, not the listed one."
+    );
+  }
 }
 
 /// Records, in the sidecar, which configured source each of `installed`
@@ -194,28 +227,84 @@ async fn fetch_profile_code(
 
 /// Resolves `zip_bytes`' mod list against `sources`' merged manifest and installs
 /// it, the multi-source counterpart of the engine's own `import_r2z_in` (which
-/// resolves against a single client's manifest instead).
+/// resolves against a single client's manifest and always installs latest).
+///
+/// Unless `track_latest`, each listed mod is installed at the version the list
+/// names and recorded as a pin. A listed mod whose version nothing offers is
+/// skipped with a warning (it stays as installed) rather than failing the whole
+/// import, which the engine's own helper would do. The rest mirrors that helper:
+/// disabled mods stay disabled, any failure is an error, and the export's
+/// per-mod configs are extracted last so they win over package defaults.
 async fn import_zip_with_sources(
   target: &Target,
   eco: &Ecosystem,
   sources: &[Box<dyn ModSource>],
   zip_bytes: &[u8],
+  track_latest: bool,
 ) -> AppResult<(Vec<String>, HashMap<String, SourceId>)> {
+  let export = portability::read_export(zip_bytes)?;
+
+  let pins: HashMap<String, String> = match track_latest {
+    true => HashMap::new(),
+    false => export
+      .mods
+      .iter()
+      .map(|entry| (entry.name.clone(), entry.version.to_string()))
+      .collect(),
+  };
+
   let (index, source_map) =
-    crate::sources::merged_manifest(&crate::sources::as_refs(sources), false).await?;
+    crate::sources::merged_manifest_pinned(&crate::sources::as_refs(sources), false, &pins).await?;
   let download_client = crate::sources::first_download_client(sources)?;
 
-  let installed = portability::import_r2z_in(
+  let missing = crate::sources::unavailable_pins(&index, &pins);
+
+  crate::sources::warn_unavailable_pins(&missing, &pins);
+
+  let desired: Vec<String> = export
+    .mods
+    .iter()
+    .map(|entry| entry.name.clone())
+    .filter(|name| !missing.contains(name))
+    .collect();
+  let protect: Vec<String> = export
+    .mods
+    .iter()
+    .filter(|entry| !entry.enabled)
+    .map(|entry| entry.name.clone())
+    .collect();
+  let batch = profile::InstallBatch::new(desired, protect);
+
+  let outcome = profile::install_batch(
     &target.dir,
     &target.base,
     eco,
     &index,
     download_client,
     GAME,
-    zip_bytes,
+    &batch,
     modlist::now_millis(),
   )
   .await?;
+
+  if let Some((name, error)) = outcome.failed.into_iter().next() {
+    return Err(AppError::Other(format!("importing {name}: {error}")));
+  }
+
+  portability::extract_configs_in(&target.dir, zip_bytes)?;
+
+  let mut installed = outcome.succeeded;
+
+  installed.sort();
+  installed.dedup();
+
+  crate::sources::record_pins(
+    target,
+    pins
+      .iter()
+      .filter(|(name, _)| installed.contains(name))
+      .map(|(name, version)| (name.clone(), version.clone())),
+  )?;
 
   Ok((installed, source_map))
 }
@@ -234,13 +323,24 @@ async fn import_r2modman_dir_with_sources(
   target: &Target,
   source_dir: &Path,
   sources: &[Box<dyn ModSource>],
+  track_latest: bool,
 ) -> AppResult<portability::AdoptedProfile> {
   portability::import_r2modman_dir(source_dir, &target.dir)?;
 
-  let adopted: Vec<String> = modlist::read(&target.dir)?
-    .iter()
-    .map(|entry| entry.name.clone())
-    .collect();
+  let entries = modlist::read(&target.dir)?;
+  let adopted: Vec<String> = entries.iter().map(|entry| entry.name.clone()).collect();
+
+  // The adopted `mods.yml` is a list with versions like any other, so its
+  // versions become pins: otherwise the next `update mods` would move them.
+  let pins: HashMap<String, String> = match track_latest {
+    true => HashMap::new(),
+    false => entries
+      .iter()
+      .map(|entry| (entry.name.clone(), entry.version_number.to_string()))
+      .collect(),
+  };
+
+  crate::sources::record_pins(target, pins.clone())?;
 
   // Every recognised loader without a `_state` tracker, the same test
   // `adopt_r2modman_dir_in` uses: r2modman never wrote it, so an adopted
@@ -260,8 +360,18 @@ async fn import_r2modman_dir_with_sources(
   }
 
   let (index, source_map) =
-    crate::sources::merged_manifest(&crate::sources::as_refs(sources), false).await?;
+    crate::sources::merged_manifest_pinned(&crate::sources::as_refs(sources), false, &pins).await?;
   let download_client = crate::sources::first_download_client(sources)?;
+
+  // A loader whose recorded version nothing offers stays as adopted, unrecorded.
+  let missing = crate::sources::unavailable_pins(&index, &pins);
+
+  crate::sources::warn_unavailable_pins(&missing, &pins);
+
+  let unrecorded: Vec<String> = unrecorded
+    .into_iter()
+    .filter(|name| !missing.contains(name))
+    .collect();
 
   for full_name in &unrecorded {
     profile::install_mod_in(
@@ -417,10 +527,11 @@ async fn import_with_prune(
   target: &Target,
   classified: &ImportSource,
   sources: &[Box<dyn ModSource>],
+  track_latest: bool,
 ) -> AppResult<()> {
   let zip_bytes = decode_archive_or_code(client, sources, classified).await?;
 
-  reconcile_zip(eco, target, sources, &zip_bytes).await
+  reconcile_zip(eco, target, sources, &zip_bytes, track_latest).await
 }
 
 /// Installs `zip_bytes`' modlist, then uninstalls whatever this target has that
@@ -434,6 +545,7 @@ pub async fn reconcile_zip(
   target: &Target,
   sources: &[Box<dyn ModSource>],
   zip_bytes: &[u8],
+  track_latest: bool,
 ) -> AppResult<()> {
   let previous: HashSet<String> = modlist::read(&target.dir)
     .unwrap_or_default()
@@ -459,11 +571,12 @@ pub async fn reconcile_zip(
     ));
   }
 
-  let (installed, source_map) = import_zip_with_sources(target, eco, sources, zip_bytes).await?;
+  let (installed, source_map) =
+    import_zip_with_sources(target, eco, sources, zip_bytes, track_latest).await?;
 
   super::report_installed(target, &installed)?;
   record_resolved_sources(target, &installed, &source_map)?;
-  println!("\nNote: an import installs each mod's latest version, not the exported one.");
+  note_latest_versions(track_latest);
 
   let stale: Vec<String> = previous.difference(&wanted).cloned().collect();
 
@@ -536,12 +649,14 @@ fn decode_profile_payload(body: &[u8]) -> AppResult<Vec<u8>> {
 /// expectation this one step breaks. Printed per loader, because the loader
 /// registry is keyed on package identity rather than the game, so nothing rules
 /// out more than one.
-fn report_reinstalled_loaders(reinstalled: &[String]) {
+fn report_reinstalled_loaders(reinstalled: &[String], track_latest: bool) {
   for loader in reinstalled {
-    println!(
-      "\nreinstalled {loader} at its latest version so it can be managed and \
-       uninstalled; the version your source profile recorded is not preserved"
-    );
+    let version = match track_latest {
+      true => "at its latest version; the version your source profile recorded is not preserved",
+      false => "at the version your source profile recorded",
+    };
+
+    println!("\nreinstalled {loader} {version} so it can be managed and uninstalled");
   }
 }
 
@@ -1214,7 +1329,7 @@ mod tests {
     }
 
     let message = runtime
-      .block_on(reconcile_zip(&eco, &target, &[], buf.get_ref()))
+      .block_on(reconcile_zip(&eco, &target, &[], buf.get_ref(), false))
       .unwrap_err()
       .to_string();
 
@@ -1393,6 +1508,7 @@ mod tests {
         &eco,
         &source,
         &["Hexium-OnlyMod".to_string()],
+        false,
       ))
       .unwrap();
 
@@ -1444,6 +1560,7 @@ mod tests {
         &eco,
         &source,
         &["Hexium-OnlyMod".to_string()],
+        false,
       ))
       .unwrap();
 
@@ -1500,6 +1617,325 @@ mod tests {
     assert_eq!(
       crate::sources::read_sources(&destination).get("Hexium-OnlyMod"),
       Some(&crate::sources::SourceId::Hexium)
+    );
+  }
+
+  /// An `.r2z` naming each `(name, "x.y.z")` as an enabled mod.
+  fn export_zip_with_versions(mods: &[(&str, &str)]) -> Vec<u8> {
+    use std::io::Write;
+
+    let mut manifest = String::from("profileName: Pinned\nmods:\n");
+
+    for (name, version) in mods {
+      let parts: Vec<&str> = version.split('.').collect();
+
+      manifest.push_str(&format!(
+        "- name: {name}\n  version:\n    major: {}\n    minor: {}\n    patch: {}\n  enabled: true\n",
+        parts[0], parts[1], parts[2]
+      ));
+    }
+
+    let mut buf = std::io::Cursor::new(Vec::new());
+    {
+      let mut zip = zip::ZipWriter::new(&mut buf);
+      zip
+        .start_file("export.r2x", zip::write::SimpleFileOptions::default())
+        .unwrap();
+      zip.write_all(manifest.as_bytes()).unwrap();
+      zip.finish().unwrap();
+    }
+
+    buf.into_inner()
+  }
+
+  fn installed_version(target: &Target, name: &str) -> Option<String> {
+    modlist::read(&target.dir)
+      .unwrap()
+      .into_iter()
+      .find(|entry| entry.name == name)
+      .map(|entry| entry.version_number.to_string())
+  }
+
+  #[test]
+  fn a_list_import_installs_the_listed_version_and_pins_it() {
+    let fixture = Fixture::new();
+    let (_server, sources) = fixture.multi_version_source();
+    let target = fixture.target();
+    let eco = Ecosystem::bundled();
+    let zip = export_zip_with_versions(&[("Owner-Multi", "1.0.0"), ("Owner-Steady", "1.0.0")]);
+
+    Runtime::new()
+      .unwrap()
+      .block_on(import_zip_with_sources(
+        &target, &eco, &sources, &zip, false,
+      ))
+      .unwrap();
+
+    assert_eq!(
+      installed_version(&target, "Owner-Multi").as_deref(),
+      Some("1.0.0")
+    );
+    assert_eq!(
+      crate::sources::read_pins(&target)
+        .get("Owner-Multi")
+        .map(String::as_str),
+      Some("1.0.0")
+    );
+  }
+
+  #[test]
+  fn track_latest_ignores_the_listed_version_and_records_no_pin() {
+    let fixture = Fixture::new();
+    let (_server, sources) = fixture.multi_version_source();
+    let target = fixture.target();
+    let eco = Ecosystem::bundled();
+    let zip = export_zip_with_versions(&[("Owner-Multi", "1.0.0")]);
+
+    Runtime::new()
+      .unwrap()
+      .block_on(import_zip_with_sources(&target, &eco, &sources, &zip, true))
+      .unwrap();
+
+    assert_eq!(
+      installed_version(&target, "Owner-Multi").as_deref(),
+      Some("2.0.0")
+    );
+    assert!(crate::sources::read_pins(&target).is_empty());
+  }
+
+  #[test]
+  fn a_listed_version_no_source_offers_is_skipped_and_the_rest_still_install() {
+    let fixture = Fixture::new();
+    let (_server, sources) = fixture.multi_version_source();
+    let target = fixture.target();
+    let eco = Ecosystem::bundled();
+    let zip = export_zip_with_versions(&[("Owner-Multi", "9.9.9"), ("Owner-Steady", "1.0.0")]);
+
+    Runtime::new()
+      .unwrap()
+      .block_on(import_zip_with_sources(
+        &target, &eco, &sources, &zip, false,
+      ))
+      .unwrap();
+
+    assert_eq!(installed_version(&target, "Owner-Multi"), None);
+    assert_eq!(
+      installed_version(&target, "Owner-Steady").as_deref(),
+      Some("1.0.0")
+    );
+    assert!(!crate::sources::read_pins(&target).contains_key("Owner-Multi"));
+  }
+
+  #[test]
+  fn an_unavailable_pin_leaves_the_installed_version_alone() {
+    let fixture = Fixture::new();
+    let (_server, sources) = fixture.multi_version_source();
+    let target = fixture.target();
+    let eco = Ecosystem::bundled();
+    let runtime = Runtime::new().unwrap();
+
+    runtime
+      .block_on(import_zip_with_sources(
+        &target,
+        &eco,
+        &sources,
+        &export_zip_with_versions(&[("Owner-Multi", "1.0.0")]),
+        false,
+      ))
+      .unwrap();
+
+    // Re-listing it at a version nothing offers must not move it to latest.
+    runtime
+      .block_on(import_zip_with_sources(
+        &target,
+        &eco,
+        &sources,
+        &export_zip_with_versions(&[("Owner-Multi", "9.9.9")]),
+        false,
+      ))
+      .unwrap();
+
+    assert_eq!(
+      installed_version(&target, "Owner-Multi").as_deref(),
+      Some("1.0.0")
+    );
+  }
+
+  #[test]
+  fn update_mods_keeps_a_pinned_version_and_track_latest_moves_it() {
+    let fixture = Fixture::new();
+    let (_server, sources) = fixture.multi_version_source();
+    let target = fixture.target();
+    let eco = Ecosystem::bundled();
+    let runtime = Runtime::new().unwrap();
+
+    runtime
+      .block_on(import_zip_with_sources(
+        &target,
+        &eco,
+        &sources,
+        &export_zip_with_versions(&[("Owner-Multi", "1.0.0")]),
+        false,
+      ))
+      .unwrap();
+
+    runtime
+      .block_on(crate::commands::update::run_mods_with_sources(
+        &sources, &eco, &target, false,
+      ))
+      .unwrap();
+
+    assert_eq!(
+      installed_version(&target, "Owner-Multi").as_deref(),
+      Some("1.0.0")
+    );
+
+    runtime
+      .block_on(crate::commands::update::run_mods_with_sources(
+        &sources, &eco, &target, true,
+      ))
+      .unwrap();
+
+    assert_eq!(
+      installed_version(&target, "Owner-Multi").as_deref(),
+      Some("2.0.0")
+    );
+  }
+
+  #[test]
+  fn installing_a_mod_by_hand_drops_its_pin_and_takes_latest() {
+    let fixture = Fixture::new();
+    let (_server, sources) = fixture.multi_version_source();
+    let target = fixture.target();
+    let eco = Ecosystem::bundled();
+    let runtime = Runtime::new().unwrap();
+
+    runtime
+      .block_on(import_zip_with_sources(
+        &target,
+        &eco,
+        &sources,
+        &export_zip_with_versions(&[("Owner-Multi", "1.0.0"), ("Owner-Steady", "1.0.0")]),
+        false,
+      ))
+      .unwrap();
+
+    runtime
+      .block_on(crate::commands::install::run_with_sources(
+        &sources,
+        &eco,
+        &target,
+        &["Owner-Multi".to_string()],
+        false,
+      ))
+      .unwrap();
+
+    assert_eq!(
+      installed_version(&target, "Owner-Multi").as_deref(),
+      Some("2.0.0")
+    );
+
+    let pins = crate::sources::read_pins(&target);
+
+    assert!(!pins.contains_key("Owner-Multi"));
+    assert!(
+      pins.contains_key("Owner-Steady"),
+      "other pins are untouched"
+    );
+  }
+
+  #[test]
+  fn pruning_a_mod_drops_its_pin() {
+    let fixture = Fixture::new();
+    let (_server, sources) = fixture.multi_version_source();
+    let target = fixture.target();
+    let eco = Ecosystem::bundled();
+    let runtime = Runtime::new().unwrap();
+
+    runtime
+      .block_on(reconcile_zip(
+        &eco,
+        &target,
+        &sources,
+        &export_zip_with_versions(&[("Owner-Multi", "1.0.0"), ("Owner-Steady", "1.0.0")]),
+        false,
+      ))
+      .unwrap();
+    runtime
+      .block_on(reconcile_zip(
+        &eco,
+        &target,
+        &sources,
+        &export_zip_with_versions(&[("Owner-Steady", "1.0.0")]),
+        false,
+      ))
+      .unwrap();
+
+    let pins = crate::sources::read_pins(&target);
+
+    assert!(!pins.contains_key("Owner-Multi"));
+    assert!(pins.contains_key("Owner-Steady"));
+  }
+
+  #[test]
+  fn a_source_offering_the_pinned_version_beats_a_more_recent_one_that_does_not() {
+    let fixture = Fixture::new();
+    let sources = fixture.multi_sources();
+    let pins = HashMap::from([("Owner-Shared".to_string(), "1.0.0".to_string())]);
+
+    // Hexium's Owner-Shared is newer (2.0.0), Thunderstore's is the 1.0.0 the
+    // pin asks for: recency alone would pick Hexium.
+    let (index, map) = Runtime::new()
+      .unwrap()
+      .block_on(crate::sources::merged_manifest_pinned(
+        &crate::sources::as_refs(&sources),
+        false,
+        &pins,
+      ))
+      .unwrap();
+
+    assert_eq!(map.get("Owner-Shared"), Some(&SourceId::Thunderstore));
+    assert!(crate::sources::unavailable_pins(&index, &pins).is_empty());
+  }
+
+  #[test]
+  fn a_directory_import_pins_the_versions_its_mods_yml_records() {
+    let fixture = Fixture::new();
+    let (_server, sources) = fixture.multi_version_source();
+    let eco = Ecosystem::bundled();
+    let runtime = Runtime::new().unwrap();
+
+    // Build a real mods.yml by importing at 1.0.0 into one target, then adopt
+    // that directory into another.
+    let origin = fixture.target();
+
+    runtime
+      .block_on(import_zip_with_sources(
+        &origin,
+        &eco,
+        &sources,
+        &export_zip_with_versions(&[("Owner-Multi", "1.0.0")]),
+        false,
+      ))
+      .unwrap();
+
+    let destination = fixture.profile_target("adopting");
+
+    runtime
+      .block_on(import_r2modman_dir_with_sources(
+        &eco,
+        &destination,
+        &origin.dir,
+        &sources,
+        false,
+      ))
+      .unwrap();
+
+    assert_eq!(
+      crate::sources::read_pins(&destination)
+        .get("Owner-Multi")
+        .map(String::as_str),
+      Some("1.0.0")
     );
   }
 }

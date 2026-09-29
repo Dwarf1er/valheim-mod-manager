@@ -21,12 +21,16 @@
 #   VMM_BIN            the vmm binary (default: vmm, resolved via PATH)
 #   VMM_GAME_DIR       must match `game_dir` in VMM_CONFIG (default: /config/vmm_game)
 #   BEPINEX_CONFIG_DIR the image's persistent BepInEx directory (default: /config/bepinex)
+#   BEPINEX_LIVE_DIR   the image's live BepInEx install (default: /opt/valheim/bepinex/BepInEx)
+#   IMAGE_COMMON       the image's shared shell functions (default: /usr/local/etc/valheim/common)
 set -eu
 
 VMM_CONFIG="${VMM_CONFIG:-/config/vmm_config.toml}"
 VMM_BIN="${VMM_BIN:-vmm}"
 VMM_GAME_DIR="${VMM_GAME_DIR:-/config/vmm_game}"
 BEPINEX_CONFIG_DIR="${BEPINEX_CONFIG_DIR:-/config/bepinex}"
+BEPINEX_LIVE_DIR="${BEPINEX_LIVE_DIR:-/opt/valheim/bepinex/BepInEx}"
+IMAGE_COMMON="${IMAGE_COMMON:-/usr/local/etc/valheim/common}"
 
 if ! command -v "$VMM_BIN" >/dev/null 2>&1; then
   echo "vmm-update-and-restart: '$VMM_BIN' not found on PATH; is POST_BOOTSTRAP_HOOK installing it?" >&2
@@ -73,5 +77,17 @@ if [ "$before" = "$after" ]; then
   exit 0
 fi
 
-echo "vmm-update-and-restart: mods changed, restarting valheim-server"
+# The image copies BEPINEX_CONFIG_DIR into the live install only at boot and
+# during its own BepInEx updates, not when the server process restarts, so
+# without this the restart below would come back up on the old mods: removed
+# mods stay loaded and version changes never apply. Run the image's own sync
+# (it also removes what a previous sync installed and is no longer in
+# BEPINEX_CONFIG_DIR). It is bash, hence the explicit shell.
+echo "vmm-update-and-restart: mods changed, syncing them into the live install"
+if ! bash -c '. "$1" && sync_bepinex_loadables "$2" "$3"' _ \
+  "$IMAGE_COMMON" "$BEPINEX_CONFIG_DIR" "$BEPINEX_LIVE_DIR"; then
+  echo "vmm-update-and-restart: syncing into the live install failed; the restart may not pick up the changes" >&2
+fi
+
+echo "vmm-update-and-restart: restarting valheim-server"
 supervisorctl restart valheim-server

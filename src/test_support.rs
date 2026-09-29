@@ -133,6 +133,44 @@ pub fn loader_zip() -> Vec<u8> {
   zip.finish().unwrap().into_inner()
 }
 
+/// A one-source index whose `Owner-Multi` has two versions (1.0.0 older, 2.0.0
+/// newer) beside a single-version `Owner-Steady`, so version pinning has
+/// something to pin against. Downloads point at `server_url`.
+pub fn multi_version_index_json(server_url: &str) -> String {
+  let version = |name: &str, version: &str, created: &str| {
+    format!(
+      r#"{{"name":"{name}","full_name":"Owner-{name}","description":"A mod",
+      "icon":"icon.png","version_number":"{version}","dependencies":[],
+      "download_url":"{server_url}/dl/{name}-{version}.zip","downloads":1,
+      "date_created":"{created}","website_url":"","is_active":true,
+      "uuid4":"ver-{name}-{version}","file_size":1024}}"#
+    )
+  };
+  let package = |name: &str, versions: String| {
+    format!(
+      r#"{{"name":"{name}","full_name":"Owner-{name}","owner":"Owner",
+      "package_url":"https://example.com/{name}",
+      "date_created":"2024-01-01T12:00:00Z","date_updated":"2024-06-01T12:00:00Z",
+      "uuid4":"pkg-{name}","rating_score":1,"is_pinned":false,
+      "is_deprecated":false,"has_nsfw_content":false,"categories":[],
+      "versions":[{versions}]}}"#
+    )
+  };
+
+  format!(
+    "[{},{}]",
+    package(
+      "Multi",
+      format!(
+        "{},{}",
+        version("Multi", "2.0.0", "2024-06-01T12:00:00Z"),
+        version("Multi", "1.0.0", "2024-01-01T12:00:00Z")
+      )
+    ),
+    package("Steady", version("Steady", "1.0.0", "2024-01-01T12:00:00Z"))
+  )
+}
+
 /// A mock Thunderstore plus a client, base directory, and game directory.
 pub struct Fixture {
   /// The mock Thunderstore HTTP server backing this fixture's client.
@@ -274,6 +312,48 @@ impl Fixture {
   /// into) sees it.
   pub fn sources(&self) -> Vec<Box<dyn ModSource>> {
     vec![self.thunderstore_source()]
+  }
+
+  /// A single source over [`multi_version_index_json`], plus the mock server
+  /// that must stay alive for as long as the source is used.
+  pub fn multi_version_source(&self) -> (mockito::ServerGuard, Vec<Box<dyn ModSource>>) {
+    let mut server = mockito::Server::new();
+    let url = server.url();
+
+    server
+      .mock("GET", "/mv-pkg/")
+      .with_status(200)
+      .with_header("Content-Type", "application/json")
+      .with_header("Last-Modified", "Wed, 21 Feb 2024 15:30:45 GMT")
+      .with_body(multi_version_index_json(&url))
+      .create();
+
+    for (name, version, dll) in [
+      ("Multi", "1.0.0", "Multi-old.dll"),
+      ("Multi", "2.0.0", "Multi-new.dll"),
+      ("Steady", "1.0.0", "Steady.dll"),
+    ] {
+      server
+        .mock("GET", format!("/dl/{name}-{version}.zip").as_str())
+        .with_status(200)
+        .with_header("Content-Type", "application/zip")
+        .with_body(mod_zip_with(version, dll))
+        .create();
+    }
+
+    // A separate cache dir, so this source's index never collides with the
+    // fixture's own.
+    let cache = self.base.path().join("multi-version-cache");
+
+    std::fs::create_dir_all(&cache).unwrap();
+
+    let client = ThunderstoreClient::builder()
+      .package_index_url(format!("{url}/mv-pkg/"))
+      .cache_dir(&cache)
+      .build()
+      .unwrap();
+
+    (server, vec![Box::new(ThunderstoreSource(client))])
   }
 
   /// Both sources configured, Thunderstore first, matching the default

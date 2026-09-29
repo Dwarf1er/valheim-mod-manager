@@ -18,6 +18,7 @@ pub async fn run(
   eco: &Ecosystem,
   target: &Target,
   sources: &[Box<dyn ModSource>],
+  track_latest: bool,
 ) -> AppResult<()> {
   let desired = gale_sync::fetch_current(config).await?;
 
@@ -27,5 +28,5 @@ pub async fn run(
     desired.mods.len()
   );
 
-  super::portability::reconcile_zip(eco, target, sources, &desired.zip_bytes).await
+  super::portability::reconcile_zip(eco, target, sources, &desired.zip_bytes, track_latest).await
 }

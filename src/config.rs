@@ -72,6 +72,12 @@ pub struct AppConfig {
   /// client's download cache. Defaults to the XDG config home for vmm.
   #[serde(default)]
   pub data_dir: Option<String>,
+  /// Ignore the versions named by imported lists (gale-sync, `.r2z`, profile
+  /// codes, r2modman directories) and keep every mod on its latest version.
+  /// Off by default: a list's versions are respected and `update mods` keeps
+  /// them pinned.
+  #[serde(default)]
+  pub track_latest: bool,
   /// Which mod sources to resolve and install from. Defaults to Thunderstore
   /// alone; Hexium is opt-in.
   #[serde(default)]
@@ -88,6 +94,7 @@ impl Default for AppConfig {
       log_level: "error".into(),
       game_dir: None,
       data_dir: None,
+      track_latest: false,
       sources: SourcesConfig::default(),
       gale_sync: GaleSyncConfig::default(),
     }

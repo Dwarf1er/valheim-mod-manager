@@ -184,13 +184,26 @@ async fn run() -> AppResult<()> {
     // recorded mod, so the compiler is made to demand an arm for it.
     Command::Update(sub) => match sub.command {
       UpdatesCommand::Mods => {
-        commands::update::run_mods_with_sources(&mod_sources, &ecosystem, &target).await?
+        commands::update::run_mods_with_sources(
+          &mod_sources,
+          &ecosystem,
+          &target,
+          config.track_latest,
+        )
+        .await?
       }
       UpdatesCommand::Manifest => unreachable!("dispatched before target resolution"),
     },
     Command::List(list_args) => commands::list::run(&target, &list_args.format)?,
     Command::Install(args) => {
-      commands::install::run_with_sources(&mod_sources, &ecosystem, &target, &args.mods).await?
+      commands::install::run_with_sources(
+        &mod_sources,
+        &ecosystem,
+        &target,
+        &args.mods,
+        config.track_latest,
+      )
+      .await?
     }
     Command::Uninstall(args) => match args.all {
       true => commands::uninstall::run_all(
@@ -209,18 +222,26 @@ async fn run() -> AppResult<()> {
       false => commands::portability::export_file(&target)?,
     },
     Command::Import(args) => {
-      commands::portability::import(
+      commands::portability::import_tracking(
         &client,
         &ecosystem,
         &target,
         &args.source,
         !args.additive,
         &mod_sources,
+        config.track_latest,
       )
       .await?
     }
     Command::Sync => {
-      commands::sync::run(&config.gale_sync, &ecosystem, &target, &mod_sources).await?
+      commands::sync::run(
+        &config.gale_sync,
+        &ecosystem,
+        &target,
+        &mod_sources,
+        config.track_latest,
+      )
+      .await?
     }
     Command::Search(_) => {
       unreachable!("dispatched before target resolution")

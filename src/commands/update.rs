@@ -68,6 +68,7 @@ pub async fn run_mods_with_sources(
   sources: &[Box<dyn ModSource>],
   eco: &Ecosystem,
   target: &Target,
+  track_latest: bool,
 ) -> AppResult<()> {
   let installed = super::read_modlist(target)?;
 
@@ -75,11 +76,23 @@ pub async fn run_mods_with_sources(
     return report_nothing_installed(target);
   }
 
-  let desired: Vec<String> = installed.iter().map(|entry| entry.name.clone()).collect();
+  let mut desired: Vec<String> = installed.iter().map(|entry| entry.name.clone()).collect();
+
+  let pins = match track_latest {
+    true => std::collections::HashMap::new(),
+    false => crate::sources::read_pins(target),
+  };
 
   let (index, source_map) =
-    crate::sources::merged_manifest(&crate::sources::as_refs(sources), false).await?;
+    crate::sources::merged_manifest_pinned(&crate::sources::as_refs(sources), false, &pins).await?;
   let download_client = crate::sources::first_download_client(sources)?;
+
+  // A pinned version nothing offers any more: leave that mod as installed
+  // instead of letting the engine move it to latest.
+  let missing = crate::sources::unavailable_pins(&index, &pins);
+
+  crate::sources::warn_unavailable_pins(&missing, &pins);
+  desired.retain(|name| !missing.contains(name));
 
   update_mods_with_index(download_client, &index, eco, target, &desired).await?;
 
@@ -265,6 +278,7 @@ mod tests {
         &eco,
         &target,
         &["Hexium-OnlyMod".to_string()],
+        false,
       ))
       .unwrap();
 
@@ -279,6 +293,7 @@ mod tests {
         &fixture.multi_sources(),
         &eco,
         &target,
+        false,
       ))
       .unwrap();
 

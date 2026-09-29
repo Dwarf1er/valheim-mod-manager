@@ -334,6 +334,36 @@ pub async fn merged_manifest(
   sources: &[&dyn ModSource],
   refresh: bool,
 ) -> AppResult<(PackageIndex, HashMap<String, SourceId>)> {
+  merged_manifest_pinned(sources, refresh, &HashMap::new()).await
+}
+
+/// Whether `package` offers exactly the version `pin`.
+fn offers_version(package: &Package, pin: &str) -> bool {
+  package
+    .versions
+    .iter()
+    .any(|version| version.version_number.as_deref() == Some(pin))
+}
+
+/// [`merged_manifest`] honoring `pins` (`full_name -> version`).
+///
+/// A pinned package is cut down to just its pinned version, so the engine's
+/// version-agnostic "latest" resolves to it, for the package itself and for
+/// anything that depends on it. Two rules keep this from ever making things
+/// worse:
+///
+/// - When the same package is on more than one source, one that actually offers
+///   the pinned version beats one that does not, whatever their
+///   `date_updated`; recency only decides between equals.
+/// - A pin no source offers is ignored here (the package stays whole) rather
+///   than removing it from the index, which would fail every install that
+///   depends on it. [`unavailable_pins`] reports those so callers can skip and
+///   warn.
+pub async fn merged_manifest_pinned(
+  sources: &[&dyn ModSource],
+  refresh: bool,
+  pins: &HashMap<String, String>,
+) -> AppResult<(PackageIndex, HashMap<String, SourceId>)> {
   let mut by_full_name: HashMap<String, (Package, SourceId)> = HashMap::new();
 
   for source in sources {
@@ -347,8 +377,15 @@ pub async fn merged_manifest(
         continue;
       };
 
+      let existing_wins = |existing: &Package| match pins.get(&full_name) {
+        Some(pin) if offers_version(existing, pin) != offers_version(&package, pin) => {
+          offers_version(existing, pin)
+        }
+        _ => existing.date_updated >= package.date_updated,
+      };
+
       match by_full_name.get(&full_name) {
-        Some((existing, existing_source)) if existing.date_updated >= package.date_updated => {
+        Some((existing, existing_source)) if existing_wins(existing) => {
           tracing::info!(
             "{full_name}: keeping the version from {existing_source}, already at least as \
              recent as the one {} offers",
@@ -372,12 +409,50 @@ pub async fn merged_manifest(
   let mut source_map = HashMap::with_capacity(by_full_name.len());
   let mut packages = Vec::with_capacity(by_full_name.len());
 
-  for (full_name, (package, source_id)) in by_full_name {
+  for (full_name, (mut package, source_id)) in by_full_name {
+    if let Some(pin) = pins.get(&full_name)
+      && offers_version(&package, pin)
+    {
+      package
+        .versions
+        .retain(|version| version.version_number.as_deref() == Some(pin.as_str()));
+    }
+
     source_map.insert(full_name, source_id);
     packages.push(package);
   }
 
   Ok((packages.into(), source_map))
+}
+
+/// The pinned names whose pinned version `index` does not offer (or that it does
+/// not contain at all), sorted. Callers skip these and keep what is installed.
+pub fn unavailable_pins(index: &PackageIndex, pins: &HashMap<String, String>) -> Vec<String> {
+  let mut missing: Vec<String> = pins
+    .iter()
+    .filter(|(name, pin)| {
+      index
+        .get_package_by_full_name(name)
+        .is_none_or(|package| !offers_version(&package, pin))
+    })
+    .map(|(name, _)| name.clone())
+    .collect();
+
+  missing.sort();
+
+  missing
+}
+
+/// Warns, once per name, that a pinned version is unavailable and the mod is
+/// being left as it is.
+pub fn warn_unavailable_pins(missing: &[String], pins: &HashMap<String, String>) {
+  for name in missing {
+    eprintln!(
+      "vmm: warning: {name} is pinned to {} but no configured source offers it; \
+       leaving it as it is",
+      pins[name]
+    );
+  }
 }
 
 /// The sidecar file recording which source each installed mod came from.
@@ -437,12 +512,72 @@ pub fn record_sources(
 
 /// Drops every sidecar entry not in `keep`, so it never outlives what
 /// `mods.yml` records. Called after every successful uninstall.
+///
+/// Also drops the pins of anything no longer kept, for the same reason.
 pub fn prune_sources(target: &Target, keep: &HashSet<String>) -> AppResult<()> {
   let mut sources = read_sources(target);
 
   sources.retain(|name, _| keep.contains(name));
 
-  write_sources(target, &sources)
+  write_sources(target, &sources)?;
+
+  let mut pins = read_pins(target);
+
+  if pins.iter().any(|(name, _)| !keep.contains(name)) {
+    pins.retain(|name, _| keep.contains(name));
+    write_pins(target, &pins)?;
+  }
+
+  Ok(())
+}
+
+/// The sidecar recording the version each mod is pinned to, from the list it
+/// was last imported or synced from. `mods.yml` records what is installed, not
+/// what a list asked for, so this lives beside it like [`sources_file`].
+pub fn pins_file(target: &Target) -> PathBuf {
+  target.dir.join(".vmm_pins.json")
+}
+
+/// Reads the pins, defaulting to none when the file is missing or unreadable:
+/// no pin only ever means "latest", the safe direction to fail.
+pub fn read_pins(target: &Target) -> HashMap<String, String> {
+  let Ok(contents) = std::fs::read_to_string(pins_file(target)) else {
+    return HashMap::new();
+  };
+
+  serde_json::from_str(&contents).unwrap_or_default()
+}
+
+fn write_pins(target: &Target, pins: &HashMap<String, String>) -> AppResult<()> {
+  std::fs::write(pins_file(target), serde_json::to_string_pretty(pins)?)?;
+
+  Ok(())
+}
+
+/// Records `entries` (`full_name -> version`), merging into the existing pins.
+pub fn record_pins(
+  target: &Target,
+  entries: impl IntoIterator<Item = (String, String)>,
+) -> AppResult<()> {
+  let mut pins = read_pins(target);
+
+  pins.extend(entries);
+
+  write_pins(target, &pins)
+}
+
+/// Drops the pins of `names`, so an explicit `install` of them goes to latest.
+pub fn remove_pins(target: &Target, names: &[String]) -> AppResult<()> {
+  let mut pins = read_pins(target);
+  let before = pins.len();
+
+  pins.retain(|name, _| !names.contains(name));
+
+  if pins.len() == before {
+    return Ok(());
+  }
+
+  write_pins(target, &pins)
 }
 
 #[cfg(test)]

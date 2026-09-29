@@ -51,6 +51,11 @@ The config file supports the following settings:
 - `log_level`: Logging verbosity (`error`, `warn`, `info`, `debug`, `trace`)
 - `game_dir`: Your Valheim game folder, the directory holding the game
   executable, where the mod loader is installed
+- `track_latest`: Optional, default `false`. By default the versions named by
+  an imported list (gale-sync, `.r2z`, profile code, r2modman directory) are
+  respected: each mod is installed at the listed version and `vmm update mods`
+  keeps it there. Set `track_latest = true` to ignore listed versions and keep
+  every mod on its latest. See [Version pinning](#version-pinning).
 - `data_dir`: Optional. Where the package cache and exports live.
   Defaults to `~/.config/vmm`
 - `[sources] enabled`: Which mod sources to resolve and install from, in
@@ -119,7 +124,8 @@ vmm uninstall --force ValheimModding-Jotunn
 vmm uninstall --all
 vmm uninstall --all --yes
 
-# Update every installed mod to its latest version
+# Update every installed mod (pinned mods stay at their pinned version;
+# see Version pinning)
 vmm update mods
 
 # Refresh the cached package index (every configured source)
@@ -194,9 +200,8 @@ vmm import ~/.local/share/gale/valheim/profiles/Default
 vmm import --additive ./default_1753488000.r2z
 ```
 
-A file or profile-code import installs each mod's **latest** version, not the
-version the export pinned, and prints what it installed so any difference is
-visible. Every mod it names is resolved through the same multi-source merge
+A file or profile-code import installs each mod at the version the list names
+(see [Version pinning](#version-pinning)) and prints what it installed. Every mod it names is resolved through the same multi-source merge
 `install` uses (see [How It Works](#how-it-works)), so a mod that only exists
 on a non-default configured source (e.g. Hexium) is still found, even though
 neither `.r2z` files nor profile codes have any field to record which source
@@ -212,7 +217,7 @@ Thunderstore if the code is not found there.
 Importing an r2modman profile directory (one with a `mods.yml`) adopts it
 as-is at the versions the source recorded, and downloads nothing, with one
 exception: if the adopted `mods.yml` names a mod loader, the loader is
-reinstalled afterward (at its **latest** version, same as above, and resolved
+reinstalled afterward (at the version the `mods.yml` recorded, resolved
 through that same multi-source merge) so it gains the install record that
 makes it manageable and removable; a source naming no loader stays fully
 offline. It is also a raw copy with no pre-clean: if the destination already
@@ -226,8 +231,8 @@ record. Importing one is recognized automatically (a directory with no
 `mods.yml`) and, unlike an r2modman directory, reinstalls **every** mod it
 finds from the configured source(s) rather than merely copying files, since
 nothing can attribute a copied file to a specific mod by shape. Every mod
-therefore lands at its latest version, not necessarily the one Gale had
-pinned, and each is recorded in the `.vmm_sources.json` sidecar with whichever
+therefore lands at its latest version, since a Gale directory records no
+versions to pin, and each is recorded in the `.vmm_sources.json` sidecar with whichever
 source actually supplied it. A Gale-exported `.r2z` file or shared profile
 code, by contrast, already works today unchanged through the ordinary file/code
 import path above; only a *live* Gale profile directory needs this route.
@@ -250,6 +255,29 @@ copy of whatever is on disk, so the default does not apply to them. A stale mod
 that cannot be removed exactly (for example, a mod loader adopted from a
 directory with no install record) is reported and left in place rather than
 failing the whole run; anything else stale is still removed.
+
+### Version pinning
+
+Lists carry a version for every mod (an `.r2z` or profile code's `export.r2x`,
+a gale-sync profile, or an r2modman directory's `mods.yml`; dependencies are
+listed like any other mod). By default vmm respects them:
+
+- `import` and `sync` install each mod at its listed version and remember it in
+  `.vmm_pins.json` next to `mods.yml`.
+- `update mods` keeps pinned mods at their pinned version and moves everything
+  else to latest.
+- `vmm install X` by hand installs X at its latest version and drops X's pin.
+  X's dependencies that are already pinned stay pinned; new ones come in at
+  latest.
+- If a listed version is no longer offered by any configured source, that mod
+  is skipped with a warning and whatever is installed stays as it is.
+- A live Gale profile directory records no versions, so it installs latest and
+  pins nothing.
+- When the same package is on several sources, a source that has the pinned
+  version wins over one that is merely newer.
+
+Set `track_latest = true` in the config to ignore listed versions entirely:
+nothing is pinned and everything goes to latest, as before.
 
 ### Syncing with gale-sync
 
@@ -439,8 +467,12 @@ and `patchers/`. See step 4 of the setup below, "Limits of this approach".
    `game_dir`'s `BepInEx/{plugins,patchers,config}` symlinks into
    `/config/bepinex` if they are missing or wrong (idempotent, so this costs
    nothing on ordinary runs), then runs `vmm update manifest && vmm
-   update mods`, then restarts the `valheim-server` process via
-   `supervisorctl` if something actually changed. It compares `vmm list
+   update mods`, then, if something actually changed, runs the image's own
+   `sync_bepinex_loadables` to copy `/config/bepinex` into the live install
+   and restarts the `valheim-server` process via `supervisorctl`. The sync
+   matters: the image only does that copy at container boot and during its own
+   BepInEx updates, so a bare server restart would come back up on the old
+   mods (removed mods stay loaded, version changes never apply). It compares `vmm list
    --format json` before and after, trimmed to the JSON payload itself:
    `vmm`'s own tracing output goes to stdout too and is timestamped, so a
    raw capture would report a change on every run.
@@ -467,9 +499,9 @@ and `patchers/`. See step 4 of the setup below, "Limits of this approach".
    `vmm install`/`vmm import`; nothing Docker-specific about it. A mod that
    exists only on Hexium resolves automatically once `hexium` is in
    `[sources] enabled`. If you're migrating
-   mods that were previously placed by hand, this reinstalls each one at its
-   **latest** version, not whatever was previously pinned; check your old
-   versions first if any were intentionally held back. Restart once
+   mods that were previously placed by hand, `install` puts each one at its
+   **latest** version, not whatever was there before; check your old versions
+   first if any were intentionally held back. Restart once
    afterward to confirm the server loads cleanly from `vmm`'s install.
 
 4. **Limits of this approach.**

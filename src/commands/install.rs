@@ -45,14 +45,29 @@ pub async fn run(
 ///
 /// Records which source each succeeded mod came from in the target's
 /// `.vmm_sources.json` sidecar.
+///
+/// Installs the named mods at their latest version. Mods pinned by an earlier
+/// list import keep their pinned version unless `track_latest` is set.
 pub async fn run_with_sources(
   sources: &[Box<dyn ModSource>],
   eco: &Ecosystem,
   target: &Target,
   mods: &[String],
+  track_latest: bool,
 ) -> AppResult<()> {
+  // The named mods go to latest, so their pins are dropped; pins on anything
+  // else (their already-pinned dependencies included) still apply.
+  let pins = match track_latest {
+    true => std::collections::HashMap::new(),
+    false => {
+      crate::sources::remove_pins(target, mods)?;
+
+      crate::sources::read_pins(target)
+    }
+  };
+
   let (index, source_map) =
-    crate::sources::merged_manifest(&crate::sources::as_refs(sources), false).await?;
+    crate::sources::merged_manifest_pinned(&crate::sources::as_refs(sources), false, &pins).await?;
   let download_client = crate::sources::first_download_client(sources)?;
 
   let outcome = install_with_index(download_client, &index, eco, target, mods).await?;
@@ -424,6 +439,7 @@ mod tests {
         &eco,
         &target,
         &["Hexium-OnlyMod".to_string()],
+        false,
       ))
       .unwrap();
 
@@ -454,6 +470,7 @@ mod tests {
         &eco,
         &target,
         &["Owner-ModA".to_string()],
+        false,
       ))
       .unwrap();
 
