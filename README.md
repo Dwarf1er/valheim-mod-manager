@@ -72,18 +72,13 @@ docker compose exec -T valheim sh -c 'cat > /config/vsmm_config.toml' < vsmm_con
 ```yaml
     environment:
       BEPINEX: "true"
-      POST_BOOTSTRAP_HOOK: >-
-        curl --proto "=https" --tlsv1.2 -LsSf
-        https://github.com/Dwarf1er/valheim-server-mod-manager/releases/latest/download/valheim-server-mod-manager-installer.sh
-        | VALHEIM_SERVER_MOD_MANAGER_UNMANAGED_INSTALL=/usr/local/bin sh
-        && curl --proto "=https" --tlsv1.2 -LsSf
-        https://raw.githubusercontent.com/Dwarf1er/valheim-server-mod-manager/master/scripts/vsmm-update-and-restart.sh
-        -o /usr/local/bin/vsmm-update-and-restart.sh
-        && chmod +x /usr/local/bin/vsmm-update-and-restart.sh
+      POST_BOOTSTRAP_HOOK: curl --proto "=https" --tlsv1.2 -LsSf https://github.com/Dwarf1er/valheim-server-mod-manager/releases/latest/download/valheim-server-mod-manager-installer.sh | VALHEIM_SERVER_MOD_MANAGER_UNMANAGED_INSTALL=/usr/local/bin sh && curl --proto "=https" --tlsv1.2 -LsSf https://raw.githubusercontent.com/Dwarf1er/valheim-server-mod-manager/master/scripts/vsmm-update-and-restart.sh -o /usr/local/bin/vsmm-update-and-restart.sh && chmod +x /usr/local/bin/vsmm-update-and-restart.sh
       POST_UPDATE_CHECK_HOOK: /usr/local/bin/vsmm-update-and-restart.sh
 ```
 
 Using `docker run` instead? Pass the same three as `-e NAME='value'` flags.
+
+The hook has to run as root to install `vsmm` into `/usr/local/bin`, so leave `PUID` and `PGID` unset (or set both to `0`).
 
 **3. Recreate the container and run the update script:**
 
@@ -211,18 +206,15 @@ services:
       SERVER_NAME: "My Server"
       WORLD_NAME: "MyWorld"
       SERVER_PASS: "change-me"
-      POST_BOOTSTRAP_HOOK: >-
-        curl --proto "=https" --tlsv1.2 -LsSf
-        https://github.com/Dwarf1er/valheim-server-mod-manager/releases/latest/download/valheim-server-mod-manager-installer.sh
-        | VALHEIM_SERVER_MOD_MANAGER_UNMANAGED_INSTALL=/usr/local/bin sh
-        && curl --proto "=https" --tlsv1.2 -LsSf
-        https://raw.githubusercontent.com/Dwarf1er/valheim-server-mod-manager/master/scripts/vsmm-update-and-restart.sh
-        -o /usr/local/bin/vsmm-update-and-restart.sh
-        && chmod +x /usr/local/bin/vsmm-update-and-restart.sh
+      POST_BOOTSTRAP_HOOK: curl --proto "=https" --tlsv1.2 -LsSf https://github.com/Dwarf1er/valheim-server-mod-manager/releases/latest/download/valheim-server-mod-manager-installer.sh | VALHEIM_SERVER_MOD_MANAGER_UNMANAGED_INSTALL=/usr/local/bin sh && curl --proto "=https" --tlsv1.2 -LsSf https://raw.githubusercontent.com/Dwarf1er/valheim-server-mod-manager/master/scripts/vsmm-update-and-restart.sh -o /usr/local/bin/vsmm-update-and-restart.sh && chmod +x /usr/local/bin/vsmm-update-and-restart.sh
       POST_UPDATE_CHECK_HOOK: /usr/local/bin/vsmm-update-and-restart.sh
 ```
 
 `BEPINEX=true` is required. `vsmm` installs mods, but the image is what loads BepInEx.
+
+**Leave `PUID` and `PGID` unset, or set both to `0`.** They set the user the image runs as, and any other value (such as `1000`) runs the hooks as an unprivileged user. The install then fails with `mktemp: failed to create directory via template '/usr/local/bin/tmp.XXXXXXXXXX': Permission denied`, because `vsmm` and its update script need root to write to `/usr/local/bin`, sync mods into the live install and restart the server. The trade-off is that `./config` on the host is root-owned, so use `sudo` to edit files in it.
+
+If you write `environment:` as a list (`- NAME=value`) instead of a map, keep `POST_BOOTSTRAP_HOOK` on one line, as shown above. A list entry can't span multiple lines.
 
 **3. First run.** `vsmm` only appears on the container's `PATH` after the first boot with the hook. Start the container, give it a few seconds, then apply everything now (or, with `profile_id` set, just wait for the next scheduled cycle):
 
